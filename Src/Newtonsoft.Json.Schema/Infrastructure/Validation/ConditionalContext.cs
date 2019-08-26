@@ -10,14 +10,14 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 {
     internal class ConditionalContext : ContextBase
     {
-        public List<ValidationError> Errors;
+        public List<ValidationError>? Errors;
 
         public ConditionalContext(Validator validator)
             : base(validator)
         {
         }
 
-        public override void RaiseError(IFormattable message, ErrorType errorType, JSchema schema, object value, IList<ValidationError> childErrors)
+        public override void RaiseError(IFormattable message, ErrorType errorType, JSchema schema, object? value, IList<ValidationError>? childErrors)
         {
             if (Errors == null)
             {

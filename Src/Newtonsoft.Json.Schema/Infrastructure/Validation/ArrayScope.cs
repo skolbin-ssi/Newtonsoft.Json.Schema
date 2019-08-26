@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using Newtonsoft.Json.Linq;
@@ -15,10 +16,10 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
     {
         private int _index;
         private bool _matchContains;
-        private List<JToken> _uniqueArrayItems;
-        private IList<ConditionalContext> _containsContexts;
+        private List<JToken>? _uniqueArrayItems;
+        private IList<ConditionalContext>? _containsContexts;
 
-        public void Initialize(ContextBase context, SchemaScope parent, int initialDepth, JSchema schema)
+        public void Initialize(ContextBase context, SchemaScope? parent, int initialDepth, JSchema schema)
         {
             Initialize(context, parent, initialDepth, ScopeType.Array);
             InitializeSchema(schema);
@@ -51,7 +52,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
         }
 
-        protected override bool EvaluateTokenCore(JsonToken token, object value, int depth)
+        protected override bool EvaluateTokenCore(JsonToken token, object? value, int depth)
         {
             int relativeDepth = depth - InitialDepth;
 
@@ -91,6 +92,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
                         if (Schema.Contains != null && !_matchContains)
                         {
+                            Debug.Assert(_containsContexts != null);
+
                             List<ValidationError> containsErrors = new List<ValidationError>();
                             foreach (ConditionalContext containsContext in _containsContexts)
                             {
@@ -123,7 +126,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
                     if (Schema.ItemsPositionValidation)
                     {
-                        JSchema itemSchema = Schema._items?.ElementAtOrDefault(_index);
+                        JSchema? itemSchema = Schema._items?.ElementAtOrDefault(_index);
 
                         if (itemSchema != null)
                         {
@@ -152,6 +155,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                     // no longer need to check contains schema after match
                     if (Schema.Contains != null && !_matchContains)
                     {
+                        Debug.Assert(_containsContexts != null);
+
                         ConditionalContext containsContext = ConditionalContext.Create(Context);
                         _containsContexts.Add(containsContext);
 
@@ -165,22 +170,26 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                 {
                     if (Schema.UniqueItems)
                     {
-                        JToken currentToken = Context.TokenWriter.CurrentToken;
+                        Debug.Assert(_uniqueArrayItems != null);
+
+                        JToken currentToken = Context.TokenWriter!.CurrentToken!;
                         bool isDuplicate = JsonTokenHelpers.Contains(_uniqueArrayItems, currentToken);
                         if (isDuplicate)
                         {
-                            object v = (currentToken is JValue valueToken) ? valueToken.Value : currentToken;
+                            object? v = (currentToken is JValue valueToken) ? valueToken.Value : currentToken;
 
                             RaiseError($"Non-unique array item at index {_index}.", ErrorType.UniqueItems, Schema, v, null);
                         }
                         else
                         {
-                            _uniqueArrayItems.Add(Context.TokenWriter.CurrentToken);
+                            _uniqueArrayItems.Add(currentToken);
                         }
                     }
 
                     if (Schema.Contains != null && !_matchContains)
                     {
+                        Debug.Assert(_containsContexts != null);
+
                         ConditionalContext currentContainsContext = _containsContexts[_containsContexts.Count - 1];
                         if (!currentContainsContext.HasErrors)
                         {

@@ -31,7 +31,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets the path of the JSON location where the validation event occurred.
         /// </summary>
         /// <value>The path of the JSON location where the validation event occurred.</value>
-        public string Path => _validationError.Path;
+        public string? Path => _validationError.Path;
 
         /// <summary>
         /// Gets the text description corresponding to the validation event.

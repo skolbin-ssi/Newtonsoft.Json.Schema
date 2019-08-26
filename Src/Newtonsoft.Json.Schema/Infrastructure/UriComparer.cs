@@ -12,7 +12,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
     {
         public static readonly UriComparer Instance = new UriComparer();
 
-        public bool Equals(Uri x, Uri y)
+        public bool Equals(Uri? x, Uri? y)
         {
             if (x != y)
             {
@@ -24,12 +24,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 return true;
             }
 
-            if (!x.IsAbsoluteUri)
+            if (!x!.IsAbsoluteUri)
             {
                 return true;
             }
 
-            return string.Equals(ResolveFragment(x), ResolveFragment(y), StringComparison.Ordinal);
+            return string.Equals(ResolveFragment(x), ResolveFragment(y!), StringComparison.Ordinal);
         }
 
         public int GetHashCode(Uri obj)

@@ -12,9 +12,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
     internal class SetSchema
     {
         private readonly Action<JSchema> _setAction;
-        private readonly JSchema _target;
+        private readonly JSchema? _target;
 
-        public SetSchema(Action<JSchema> setAction, JSchema target)
+        public SetSchema(Action<JSchema> setAction, JSchema? target)
         {
             _setAction = setAction;
             _target = target;
@@ -50,11 +50,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         public readonly List<SetSchema> SetSchemas;
 
         private bool _success;
-        private JSchema _resolvedSchema;
+        private JSchema? _resolvedSchema;
 
         public bool Success => _success;
 
-        public JSchema ResolvedSchema => _resolvedSchema;
+        public JSchema? ResolvedSchema => _resolvedSchema;
 
         public DeferedSchema(Uri resolvedReference, Uri originalReference, JSchema referenceSchema)
         {
@@ -64,7 +64,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             ReferenceSchema = referenceSchema;
         }
 
-        public void AddSchemaSet(Action<JSchema> setSchema, JSchema target)
+        public void AddSchemaSet(Action<JSchema> setSchema, JSchema? target)
         {
             SetSchemas.Add(new SetSchema(setSchema, target));
         }

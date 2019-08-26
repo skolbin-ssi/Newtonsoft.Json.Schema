@@ -33,7 +33,7 @@ namespace Newtonsoft.Json.Schema
         /// with a specified error message.
         /// </summary>
         /// <param name="message">The error message that explains the reason for the exception.</param>
-        public JSchemaException(string message)
+        public JSchemaException(string? message)
             : base(message)
         {
         }
@@ -44,7 +44,7 @@ namespace Newtonsoft.Json.Schema
         /// </summary>
         /// <param name="message">The error message that explains the reason for the exception.</param>
         /// <param name="innerException">The exception that is the cause of the current exception, or a null reference (Nothing in Visual Basic) if no inner exception is specified.</param>
-        public JSchemaException(string message, Exception innerException)
+        public JSchemaException(string? message, Exception? innerException)
             : base(message, innerException)
         {
         }
@@ -63,12 +63,12 @@ namespace Newtonsoft.Json.Schema
         }
 #endif
 
-        internal static string FormatMessage(IJsonLineInfo lineInfo, string path, string message)
+        internal static string FormatMessage(IJsonLineInfo? lineInfo, string? path, string? message)
         {
             return FormatMessage(lineInfo, path, new StringBuilder(message));
         }
 
-        internal static string FormatMessage(IJsonLineInfo lineInfo, string path, StringBuilder message)
+        internal static string FormatMessage(IJsonLineInfo? lineInfo, string? path, StringBuilder message)
         {
             message.TrimEnd();
 
@@ -101,9 +101,9 @@ namespace Newtonsoft.Json.Schema
             else
             {
                 message.Append("Line ");
-                message.Append(lineInfo.LineNumber);
+                message.Append(lineInfo!.LineNumber);
                 message.Append(", position ");
-                message.Append(lineInfo.LinePosition);
+                message.Append(lineInfo!.LinePosition);
             }
 
             message.Append('.');

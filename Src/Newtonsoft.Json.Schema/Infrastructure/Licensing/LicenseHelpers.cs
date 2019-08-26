@@ -4,6 +4,7 @@
 #endregion
 
 using System;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Security;
@@ -18,8 +19,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Licensing
 
         private static long _validationCount;
         private static long _generationCount;
-        private static LicenseDetails _registeredLicense;
-        private static Timer _resetTimer;
+        private static LicenseDetails? _registeredLicense;
+        private static Timer? _resetTimer;
 
         static LicenseHelpers()
         {
@@ -76,7 +77,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Licensing
                 {
                     if (_resetTimer == null)
                     {
-                        Timer timer = new Timer(ResetCounts, null, 0, Convert.ToInt32(TimeSpan.FromHours(1).TotalMilliseconds));
+                        Timer timer = new Timer(ResetCounts, null!, 0, Convert.ToInt32(TimeSpan.FromHours(1).TotalMilliseconds));
 
 #if !PORTABLE
                         Thread.MemoryBarrier();
@@ -96,8 +97,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Licensing
 
         public static void RegisterLicense(string license)
         {
-            ReleaseDateAttribute releaseDateAttribute = ReflectionUtils.GetAttribute<ReleaseDateAttribute>(typeof(LicenseHelpers).Assembly());
+            ReleaseDateAttribute? releaseDateAttribute = ReflectionUtils.GetAttribute<ReleaseDateAttribute>(typeof(LicenseHelpers).Assembly());
 
+            Debug.Assert(releaseDateAttribute != null);
             RegisterLicense(license, releaseDateAttribute.ReleaseDate);
         }
 
@@ -135,7 +137,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Licensing
                 throw new JSchemaException("Specified license text is invalid.");
             }
 
-            LicenseDetails deserializedLicense;
+            LicenseDetails? deserializedLicense;
 
             using (MemoryStream ms = new MemoryStream(licenseData, 128, licenseData.Length - 128))
             using (JsonTextReader reader = new JsonTextReader(new StreamReader(ms)))
@@ -144,6 +146,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Licensing
 
                 deserializedLicense = serializer.Deserialize<LicenseDetails>(reader);
             }
+
+            Debug.Assert(deserializedLicense != null);
 
             byte[] data = deserializedLicense.GetSignificateData();
             byte[] signature = SubArray(licenseData, 0, 128);

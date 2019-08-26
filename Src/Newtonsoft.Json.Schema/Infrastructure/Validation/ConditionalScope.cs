@@ -13,8 +13,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
     [DebuggerDisplay("{DebuggerDisplay,nq}")]
     internal abstract class ConditionalScope : Scope
     {
-        protected ConditionalContext ConditionalContext;
-        protected SchemaScope ParentSchemaScope;
+        protected ConditionalContext ConditionalContext = null!; // Always set in initialize
+        protected SchemaScope ParentSchemaScope = null!; // Always set in initialize
         protected readonly List<SchemaScope> ChildScopes;
 
         protected ConditionalScope()
@@ -28,9 +28,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 #endif
         ;
 
-        public override void Initialize(ContextBase context, SchemaScope parent, int initialDepth, ScopeType type)
+        public override void Initialize(ContextBase context, SchemaScope? parent, int initialDepth, ScopeType type)
         {
             base.Initialize(context, parent, initialDepth, type);
+
+            Debug.Assert(parent != null);
 
             ChildScopes.Clear();
             ParentSchemaScope = parent;
@@ -51,7 +53,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             int scopeCurrentIndex = scopeIndex;
 
             // check to see whether a scope with the same schema exists
-            SchemaScope childScope = GetExistingSchemaScope(schema, ref scopeCurrentIndex);
+            SchemaScope? childScope = GetExistingSchemaScope(schema, ref scopeCurrentIndex);
 
             if (childScope == null)
             {
@@ -65,7 +67,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             ChildScopes.Add(childScope);
         }
 
-        protected SchemaScope GetExistingSchemaScope(JSchema schema, ref int scopeCurrentIndex)
+        protected SchemaScope? GetExistingSchemaScope(JSchema schema, ref int scopeCurrentIndex)
         {
             for (int i = Context.Scopes.Count - 1; i >= 0; i--)
             {
@@ -110,7 +112,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             return null;
         }
 
-        protected int GetChildrenValidCount(JsonToken token, object value, int depth)
+        protected int GetChildrenValidCount(JsonToken token, object? value, int depth)
         {
             int count = 0;
             for (int i = 0; i < ChildScopes.Count; i++)
@@ -127,7 +129,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             return count;
         }
 
-        protected bool GetChildrenAnyValid(JsonToken token, object value, int depth)
+        protected bool GetChildrenAnyValid(JsonToken token, object? value, int depth)
         {
             for (int i = 0; i < ChildScopes.Count; i++)
             {
@@ -143,7 +145,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             return false;
         }
 
-        protected bool GetChildrenAllValid(JsonToken token, object value, int depth)
+        protected bool GetChildrenAllValid(JsonToken token, object? value, int depth)
         {
             for (int i = 0; i < ChildScopes.Count; i++)
             {
@@ -159,7 +161,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             return true;
         }
 
-        protected SchemaScope GetSchemaScopeBySchema(JSchema schema, JsonToken token, object value, int depth)
+        protected SchemaScope GetSchemaScopeBySchema(JSchema schema, JsonToken token, object? value, int depth)
         {
             for (int i = 0; i < ChildScopes.Count; i++)
             {
@@ -172,10 +174,10 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                 }
             }
 
-            return null;
+            throw new InvalidOperationException("Could not find scope for schema.");
         }
 
-        private void AssertScopeComplete(SchemaScope schemaScope, JsonToken token, object value, int depth)
+        private void AssertScopeComplete(SchemaScope schemaScope, JsonToken token, object? value, int depth)
         {
             // the schema scope that the conditional scope depends on may not be complete because it has be re-ordered
             // schema scope will be at the same depth at the conditional so evaluate it immediately

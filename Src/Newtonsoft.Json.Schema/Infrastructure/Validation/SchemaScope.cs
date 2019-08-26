@@ -16,9 +16,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
     [DebuggerDisplay("{DebuggerDisplay,nq}")]
     internal abstract class SchemaScope : Scope
     {
-        public JSchema Schema;
+        public JSchema Schema = null!; // Always set in initialize
         public bool IsValid;
-        public List<ConditionalScope> ConditionalChildren;
+        public List<ConditionalScope>? ConditionalChildren;
 #if DEBUG
         internal List<SchemaScope> SchemaChildren = new List<SchemaScope>();
         internal List<ConditionalScope> ConditionalParents = new List<ConditionalScope>();
@@ -36,7 +36,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
         }
 
 #if DEBUG
-        public override void Initialize(ContextBase context, SchemaScope parent, int initialDepth, ScopeType type)
+        public override void Initialize(ContextBase context, SchemaScope? parent, int initialDepth, ScopeType type)
         {
             base.Initialize(context, parent, initialDepth, type);
 
@@ -59,19 +59,19 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
         internal string DebuggerDisplay => GetType().Name + " - IsValid=" + IsValid + " - Complete=" + Complete
 #if DEBUG
-                                           + " - SchemaId=" + Schema.DebugId
+                                           + " - SchemaId=" + Schema?.DebugId
                                            + " - ScopeId=" + DebugId
 #endif
         ;
 
-        public static SchemaScope CreateTokenScope(JsonToken token, JSchema schema, ContextBase context, SchemaScope parent, int depth)
+        public static SchemaScope CreateTokenScope(JsonToken token, JSchema schema, ContextBase context, SchemaScope? parent, int depth)
         {
             SchemaScope scope;
 
             switch (token)
             {
                 case JsonToken.StartObject:
-                    ObjectScope objectScope = context.Validator.GetCachedScope<ObjectScope>(ScopeType.Object);
+                    ObjectScope? objectScope = context.Validator.GetCachedScope<ObjectScope>(ScopeType.Object);
                     if (objectScope == null)
                     {
                         objectScope = new ObjectScope();
@@ -85,7 +85,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                     break;
                 case JsonToken.StartArray:
                 case JsonToken.StartConstructor:
-                    ArrayScope arrayScope = context.Validator.GetCachedScope<ArrayScope>(ScopeType.Array);
+                    ArrayScope? arrayScope = context.Validator.GetCachedScope<ArrayScope>(ScopeType.Array);
                     if (arrayScope == null)
                     {
                         arrayScope = new ArrayScope();
@@ -96,7 +96,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                     scope = arrayScope;
                     break;
                 default:
-                    PrimativeScope primativeScope = context.Validator.GetCachedScope<PrimativeScope>(ScopeType.Primitive);
+                    PrimativeScope? primativeScope = context.Validator.GetCachedScope<PrimativeScope>(ScopeType.Primitive);
                     if (primativeScope == null)
                     {
                         primativeScope = new PrimativeScope();
@@ -110,7 +110,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
             if (!schema._allOf.IsNullOrEmpty())
             {
-                AllOfScope allOfScope = context.Validator.GetCachedScope<AllOfScope>(ScopeType.AllOf);
+                AllOfScope? allOfScope = context.Validator.GetCachedScope<AllOfScope>(ScopeType.AllOf);
                 if (allOfScope == null)
                 {
                     allOfScope = new AllOfScope();
@@ -122,7 +122,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
             if (!schema._anyOf.IsNullOrEmpty())
             {
-                AnyOfScope anyOfScope = context.Validator.GetCachedScope<AnyOfScope>(ScopeType.AnyOf);
+                AnyOfScope? anyOfScope = context.Validator.GetCachedScope<AnyOfScope>(ScopeType.AnyOf);
                 if (anyOfScope == null)
                 {
                     anyOfScope = new AnyOfScope();
@@ -134,7 +134,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
             if (!schema._oneOf.IsNullOrEmpty())
             {
-                OneOfScope oneOfScope = context.Validator.GetCachedScope<OneOfScope>(ScopeType.OneOf);
+                OneOfScope? oneOfScope = context.Validator.GetCachedScope<OneOfScope>(ScopeType.OneOf);
                 if (oneOfScope == null)
                 {
                     oneOfScope = new OneOfScope();
@@ -146,7 +146,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
             if (schema.Not != null)
             {
-                NotScope notScope = context.Validator.GetCachedScope<NotScope>(ScopeType.Not);
+                NotScope? notScope = context.Validator.GetCachedScope<NotScope>(ScopeType.Not);
                 if (notScope == null)
                 {
                     notScope = new NotScope();
@@ -159,7 +159,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             // only makes sense to eval if/then/else when there is an if and either a then or a else
             if (schema.If != null && (schema.Then != null || schema.Else != null))
             {
-                IfThenElseScope ifThenElseScope = context.Validator.GetCachedScope<IfThenElseScope>(ScopeType.IfThenElse);
+                IfThenElseScope? ifThenElseScope = context.Validator.GetCachedScope<IfThenElseScope>(ScopeType.IfThenElse);
                 if (ifThenElseScope == null)
                 {
                     ifThenElseScope = new IfThenElseScope();
@@ -185,12 +185,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             return scope;
         }
 
-        protected void EnsureValid(object value)
+        protected void EnsureValid(object? value)
         {
             EnsureValid(this, Schema, value);
         }
 
-        internal static void EnsureValid(SchemaScope scope, JSchema schema, object value)
+        internal static void EnsureValid(SchemaScope scope, JSchema schema, object? value)
         {
             if (schema.Reference != null)
             {
@@ -203,7 +203,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
         }
 
-        protected void ValidateConditionalChildren(JsonToken token, object value, int depth)
+        protected void ValidateConditionalChildren(JsonToken token, object? value, int depth)
         {
             if (!ConditionalChildren.IsNullOrEmpty())
             {
@@ -217,7 +217,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
         }
 
-        protected void EnsureEnum(JsonToken token, object value)
+        protected void EnsureEnum(JsonToken token, object? value)
         {
             bool isEnum = !Schema._enum.IsNullOrEmpty();
             bool hasConst = Schema.Const != null;
@@ -244,7 +244,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
                 if (JsonTokenHelpers.IsPrimitiveOrEndToken(token) || token == JsonToken.PropertyName)
                 {
-                    JToken currentToken = Context.TokenWriter.CurrentToken;
+                    JToken currentToken = Context.TokenWriter!.CurrentToken!;
 
                     if (isEnum)
                     {
@@ -252,7 +252,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                             ? new JValue(property.Name)
                             : currentToken;
 
-                        bool defined = JsonTokenHelpers.Contains(Schema._enum, resolvedToken);
+                        bool defined = JsonTokenHelpers.Contains(Schema._enum!, resolvedToken);
 
                         if (!defined)
                         {
@@ -265,7 +265,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
                     if (hasConst)
                     {
-                        bool defined = JsonTokenHelpers.ImplicitDeepEquals(Schema.Const, currentToken);
+                        bool defined = JsonTokenHelpers.ImplicitDeepEquals(Schema.Const!, currentToken);
 
                         if (!defined)
                         {
@@ -280,7 +280,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                     {
                         JsonValidatorContext context = new JsonValidatorContext(this, Schema);
 
-                        foreach (JsonValidator validator in Schema._validators)
+                        foreach (JsonValidator validator in Schema._validators!)
                         {
                             validator.Validate(currentToken, context);
                         }
@@ -291,15 +291,15 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
         protected bool TestType(JSchema currentSchema, JSchemaType currentType)
         {
-            return TestType<object>(currentSchema, currentType, null);
+            return TestType(currentSchema, currentType, null);
         }
 
-        protected bool TestType<T>(JSchema currentSchema, JSchemaType currentType, T value)
+        protected bool TestType(JSchema currentSchema, JSchemaType currentType, object? value)
         {
             return TestType(this, currentSchema, currentType, value);
         }
 
-        internal static bool TestType<T>(SchemaScope scope, JSchema currentSchema, JSchemaType currentType, T value)
+        internal static bool TestType(SchemaScope scope, JSchema currentSchema, JSchemaType currentType, object? value)
         {
             if (!JSchemaTypeHelpers.HasFlag(currentSchema.Type, currentType))
             {
@@ -310,12 +310,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             return true;
         }
 
-        protected void CreateScopesAndEvaluateToken(JsonToken token, object value, int depth, JSchema schema)
+        protected void CreateScopesAndEvaluateToken(JsonToken token, object? value, int depth, JSchema schema)
         {
             CreateScopesAndEvaluateToken(token, value, depth, schema, this, Context);
         }
 
-        protected void CreateScopesAndEvaluateToken(JsonToken token, object value, int depth, JSchema schema, SchemaScope parent, ContextBase context)
+        protected void CreateScopesAndEvaluateToken(JsonToken token, object? value, int depth, JSchema schema, SchemaScope? parent, ContextBase context)
         {
             int startCount = Context.Scopes.Count;
 
@@ -331,7 +331,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
         }
 
-        internal override void RaiseError(IFormattable message, ErrorType errorType, JSchema schema, object value, IList<ValidationError> childErrors)
+        internal override void RaiseError(IFormattable message, ErrorType errorType, JSchema schema, object? value, IList<ValidationError>? childErrors)
         {
             IsValid = false;
 

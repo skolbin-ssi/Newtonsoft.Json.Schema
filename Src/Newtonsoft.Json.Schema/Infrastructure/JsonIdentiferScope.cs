@@ -13,9 +13,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
     {
         public static readonly JsonIdentiferScope Empty = new JsonIdentiferScope(null);
 
-        public Uri Id { get; }
+        public Uri? Id { get; }
 
-        public JsonIdentiferScope(Uri id)
+        public JsonIdentiferScope(Uri? id)
         {
             Id = id;
         }

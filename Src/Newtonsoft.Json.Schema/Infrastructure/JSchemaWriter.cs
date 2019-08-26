@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Schema.Infrastructure.Collections;
@@ -17,18 +18,18 @@ namespace Newtonsoft.Json.Schema.Infrastructure
     {
         private readonly JsonWriter _writer;
         private readonly KnownSchemaCollection _knownSchemas;
-        private readonly List<JSchema> _schemaStack;
-        private readonly IList<ExternalSchema> _externalSchemas;
+        private readonly List<JSchema>? _schemaStack;
+        private readonly IList<ExternalSchema>? _externalSchemas;
         private readonly JSchemaWriterReferenceHandling _referenceHandling;
         private SchemaVersion _version;
-        private JSchema _rootSchema;
+        private JSchema? _rootSchema;
 
         public JSchemaWriter(JsonWriter writer)
             : this(writer, null)
         {
         }
 
-        public JSchemaWriter(JsonWriter writer, JSchemaWriterSettings settings)
+        public JSchemaWriter(JsonWriter writer, JSchemaWriterSettings? settings)
         {
             ValidationUtils.ArgumentNotNull(writer, nameof(writer));
 
@@ -51,9 +52,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void ReferenceOrWriteSchema(JSchema context, JSchema schema, string propertyName, bool isDefinitions = false)
+        private void ReferenceOrWriteSchema(JSchema context, JSchema schema, string? propertyName, bool isDefinitions = false)
         {
-            KnownSchema knownSchema = _knownSchemas.GetByJSchema(schema);
+            KnownSchema? knownSchema = _knownSchemas.GetByJSchema(schema);
             if (knownSchema == null)
             {
                 return;
@@ -66,7 +67,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             if (ShouldWriteReference(knownSchema, isDefinitions))
             {
-                KnownSchema currentKnownSchema = _knownSchemas.GetByJSchema(context);
+                KnownSchema currentKnownSchema = _knownSchemas.GetByJSchema(context)!;
 
                 Uri reference;
 
@@ -120,7 +121,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     return true;
                 }
 
-                bool isRecursive = _schemaStack.Contains(knownSchema.Schema);
+                bool isRecursive = _schemaStack!.Contains(knownSchema.Schema);
 
                 if (isRecursive)
                 {
@@ -150,7 +151,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         {
             if (token is JObject o)
             {
-                JSchemaAnnotation schemaAnnotation = o.Annotation<JSchemaAnnotation>();
+                JSchemaAnnotation? schemaAnnotation = o.Annotation<JSchemaAnnotation>();
 
                 if (schemaAnnotation != null)
                 {
@@ -195,7 +196,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             {
                 JConstructor c = (JConstructor)token;
 
-                writer.WriteStartConstructor(c.Name);
+                writer.WriteStartConstructor(c.Name!);
 
                 foreach (JToken t in c.Children())
                 {
@@ -265,7 +266,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             if (schema == _rootSchema)
             {
-                Uri resolvedVersionUri = (_version != SchemaVersion.Unset)
+                Uri? resolvedVersionUri = (_version != SchemaVersion.Unset)
                     ? SchemaVersionHelpers.MapSchemaVersion(_version)
                     : schema.SchemaVersion;
 
@@ -435,7 +436,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void WriteSchema(JSchema context, JSchema schema, string name)
+        private void WriteSchema(JSchema context, JSchema? schema, string name)
         {
             if (schema != null)
             {
@@ -443,7 +444,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void WriteSchemas(JSchema context, JSchemaCollection schemas, string name)
+        private void WriteSchemas(JSchema context, JSchemaCollection? schemas, string name)
         {
             if (!schemas.IsNullOrEmpty())
             {
@@ -494,7 +495,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void WriteSchemaDictionaryIfNotNull(JSchema context, JsonWriter writer, string propertyName, IDictionary<string, JSchema> properties)
+        private void WriteSchemaDictionaryIfNotNull(JSchema context, JsonWriter writer, string propertyName, IDictionary<string, JSchema>? properties)
         {
             if (!properties.IsNullOrEmpty())
             {
@@ -547,7 +548,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void WritePropertyIfNotDefault<T>(JsonWriter writer, string propertyName, T value, T defaultValue = default(T))
+        private void WritePropertyIfNotDefault<T>(JsonWriter writer, string propertyName, T value, T defaultValue = default(T)) where T : struct
         {
             if (!value.Equals(defaultValue))
             {
@@ -556,7 +557,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void WritePropertyIfNotNull(JsonWriter writer, string propertyName, object value)
+        private void WritePropertyIfNotNull(JsonWriter writer, string propertyName, object? value)
         {
             if (value != null)
             {

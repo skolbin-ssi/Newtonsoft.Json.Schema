@@ -26,9 +26,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
         private SchemaVersion? _schemaVersion;
         private bool _hasValidatedLicense;
 
-        public JTokenWriter TokenWriter;
-        public JSchema Schema;
-        public event SchemaValidationEventHandler ValidationEventHandler;
+        public JTokenWriter? TokenWriter;
+        public JSchema? Schema;
+        public event SchemaValidationEventHandler? ValidationEventHandler;
 #if !(NET35 || NET40)
         public TimeSpan? RegexMatchTimeout;
 #endif
@@ -39,7 +39,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             get { return _scopes; }
         }
 
-        public abstract ValidationError CreateError(IFormattable message, ErrorType errorType, JSchema schema, object value, IList<ValidationError> childErrors);
+        public abstract ValidationError CreateError(IFormattable message, ErrorType errorType, JSchema schema, object? value, IList<ValidationError>? childErrors);
 
         protected Validator(object publicValidator)
         {
@@ -49,7 +49,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             _context = new ValidatorContext(this);
         }
 
-        public void RaiseError(IFormattable message, ErrorType errorType, JSchema schema, object value, IList<ValidationError> childErrors)
+        public void RaiseError(IFormattable message, ErrorType errorType, JSchema schema, object? value, IList<ValidationError>? childErrors)
         {
             ValidationError error = CreateError(message, errorType, schema, value, childErrors);
             RaiseError(error);
@@ -57,6 +57,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
         public void RaiseError(ValidationError error)
         {
+            Debug.Assert(Schema != null);
+
             // shared cache information that could be read/populated from multiple threads
             // lock to ensure that only one thread writes known schemas
             if (!_knownSchemasPopulated)
@@ -78,7 +80,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
             PopulateSchemaId(error);
 
-            SchemaValidationEventHandler handler = ValidationEventHandler;
+            SchemaValidationEventHandler? handler = ValidationEventHandler;
             if (handler != null)
             {
                 handler(_publicValidator, new SchemaValidationEventArgs(error));
@@ -95,6 +97,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             {
                 if (_schemaVersion == null)
                 {
+                    Debug.Assert(Schema != null);
+
                     _schemaVersion = SchemaVersionHelpers.MapSchemaUri(Schema.SchemaVersion);
                 }
 
@@ -104,7 +108,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
         private void PopulateSchemaId(ValidationError error)
         {
-            Uri schemaId = null;
+            Debug.Assert(Schema != null);
+
+            Uri? schemaId = null;
             for (int i = 0; i < Schema.KnownSchemas.Count; i++)
             {
                 KnownSchema s = Schema.KnownSchemas[i];
@@ -129,14 +135,14 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
         }
 
-        protected ValidationError CreateError(IFormattable message, ErrorType errorType, JSchema schema, object value, IList<ValidationError> childErrors, IJsonLineInfo lineInfo, string path)
+        protected ValidationError CreateError(IFormattable message, ErrorType errorType, JSchema schema, object? value, IList<ValidationError>? childErrors, IJsonLineInfo? lineInfo, string path)
         {
             ValidationError error = ValidationError.CreateValidationError(message, errorType, schema, null, value, childErrors, lineInfo, path);
 
             return error;
         }
 
-        public void ValidateCurrentToken(JsonToken token, object value, int depth)
+        public void ValidateCurrentToken(JsonToken token, object? value, int depth)
         {
             if (depth == 0)
             {
@@ -197,7 +203,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             }
         }
 
-        public T GetCachedScope<T>(ScopeType type) where T : Scope
+        public T? GetCachedScope<T>(ScopeType type) where T : Scope
         {
             for (int i = 0; i < _scopesCache.Count; i++)
             {

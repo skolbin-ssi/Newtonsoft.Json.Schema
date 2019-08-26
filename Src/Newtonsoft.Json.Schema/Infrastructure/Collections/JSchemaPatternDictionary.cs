@@ -6,6 +6,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -15,8 +16,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Collections
     {
         private readonly JSchema _schema;
         private readonly string _pattern;
-        private Regex _patternRegex;
-        private string _patternError;
+        private Regex? _patternRegex;
+        private string? _patternError;
 
         public string Pattern => _pattern;
 
@@ -32,8 +33,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Collections
 #if !(NET35 || NET40)
             TimeSpan? matchTimeout,
 #endif
-            out Regex regex,
-            out string errorMessage)
+            [NotNullWhen(true)]out Regex? regex,
+            [NotNullWhen(false)]out string? errorMessage)
         {
             bool result = RegexHelpers.TryGetPatternRegex(
                 _pattern,
@@ -52,7 +53,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Collections
     internal class JSchemaPatternDictionary : IDictionary<string, JSchema>
     {
         private readonly Dictionary<string, PatternSchema> _inner;
-        private ValuesCollection _values;
+        private ValuesCollection? _values;
 
         public JSchemaPatternDictionary()
         {
@@ -151,7 +152,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Collections
                 return true;
             }
 
-            value = null;
+            value = null!;
             return false;
         }
 

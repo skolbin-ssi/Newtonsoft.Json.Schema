@@ -35,12 +35,12 @@ namespace Newtonsoft.Json.Schema
         /// Gets the path to the JSON where the error occurred.
         /// </summary>
         /// <value>The path to the JSON where the error occurred.</value>
-        public string Path => ValidationError?.Path;
+        public string? Path => ValidationError?.Path;
 
         /// <summary>
         /// Gets the <see cref="JSchemaValidationException"/>'s validation error.
         /// </summary>
-        public ValidationError ValidationError { get; internal set; }
+        public ValidationError? ValidationError { get; internal set; }
 
         /// <summary>
         /// Initializes a new instance of the <see cref="JSchemaValidationException"/> class.
@@ -54,7 +54,7 @@ namespace Newtonsoft.Json.Schema
         /// with a specified error message.
         /// </summary>
         /// <param name="message">The error message that explains the reason for the exception.</param>
-        public JSchemaValidationException(string message)
+        public JSchemaValidationException(string? message)
             : base(message)
         {
         }
@@ -65,7 +65,7 @@ namespace Newtonsoft.Json.Schema
         /// </summary>
         /// <param name="message">The error message that explains the reason for the exception.</param>
         /// <param name="innerException">The exception that is the cause of the current exception, or a null reference (Nothing in Visual Basic) if no inner exception is specified.</param>
-        public JSchemaValidationException(string message, Exception innerException)
+        public JSchemaValidationException(string? message, Exception? innerException)
             : base(message, innerException)
         {
         }
@@ -77,7 +77,7 @@ namespace Newtonsoft.Json.Schema
         /// <param name="message">The error message that explains the reason for the exception.</param>
         /// <param name="innerException">The exception that is the cause of the current exception, or a null reference (Nothing in Visual Basic) if no inner exception is specified.</param>
         /// <param name="validationError">The <see cref="ValidationError"/> for ths exception.</param>
-        public JSchemaValidationException(string message, Exception innerException, ValidationError validationError)
+        public JSchemaValidationException(string? message, Exception? innerException, ValidationError? validationError)
             : base(message, innerException)
         {
             ValidationError = validationError;

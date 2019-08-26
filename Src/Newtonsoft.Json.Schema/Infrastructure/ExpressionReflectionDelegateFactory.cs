@@ -21,7 +21,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
         internal static ReflectionDelegateFactory Instance => _instance;
 
-        public override ObjectConstructor<object> CreateParameterizedConstructor(MethodBase method)
+        public override ObjectConstructor<object?> CreateParameterizedConstructor(MethodBase method)
         {
             ValidationUtils.ArgumentNotNull(method, nameof(method));
 
@@ -31,13 +31,13 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             Expression callExpression = BuildMethodCall(method, type, null, argsParameterExpression);
 
-            LambdaExpression lambdaExpression = Expression.Lambda(typeof(ObjectConstructor<object>), callExpression, argsParameterExpression);
+            LambdaExpression lambdaExpression = Expression.Lambda(typeof(ObjectConstructor<object?>), callExpression, argsParameterExpression);
 
-            ObjectConstructor<object> compiled = (ObjectConstructor<object>)lambdaExpression.Compile();
+            ObjectConstructor<object?> compiled = (ObjectConstructor<object?>)lambdaExpression.Compile();
             return compiled;
         }
 
-        public override MethodCall<T, object> CreateMethodCall<T>(MethodBase method)
+        public override MethodCall<T, object?> CreateMethodCall<T>(MethodBase method)
         {
             ValidationUtils.ArgumentNotNull(method, nameof(method));
 
@@ -48,9 +48,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             Expression callExpression = BuildMethodCall(method, type, targetParameterExpression, argsParameterExpression);
 
-            LambdaExpression lambdaExpression = Expression.Lambda(typeof(MethodCall<T, object>), callExpression, targetParameterExpression, argsParameterExpression);
+            LambdaExpression lambdaExpression = Expression.Lambda(typeof(MethodCall<T, object?>), callExpression, targetParameterExpression, argsParameterExpression);
 
-            MethodCall<T, object> compiled = (MethodCall<T, object>)lambdaExpression.Compile();
+            MethodCall<T, object?> compiled = (MethodCall<T, object?>)lambdaExpression.Compile();
             return compiled;
         }
 
@@ -59,9 +59,16 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             public Expression Value;
             public ParameterExpression Variable;
             public bool IsOut;
+
+            public ByRefParameter(Expression value, ParameterExpression variable, bool isOut)
+            {
+                Value = value;
+                Variable = variable;
+                IsOut = isOut;
+            }
         }
 
-        private Expression BuildMethodCall(MethodBase method, Type type, ParameterExpression targetParameterExpression, ParameterExpression argsParameterExpression)
+        private Expression BuildMethodCall(MethodBase method, Type type, ParameterExpression? targetParameterExpression, ParameterExpression argsParameterExpression)
         {
             ParameterInfo[] parametersInfo = method.GetParameters();
 
@@ -97,7 +104,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     if (isByRef)
                     {
                         ParameterExpression variable = Expression.Variable(parameterType);
-                        refParameterMap.Add(new ByRefParameter {Value = argExpression, Variable = variable, IsOut = parameter.IsOut});
+                        refParameterMap.Add(new ByRefParameter(argExpression, variable, parameter.IsOut));
 
                         argExpression = variable;
                     }
@@ -117,7 +124,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
             else
             {
-                Expression readParameter = EnsureCastExpression(targetParameterExpression, method.DeclaringType);
+                Expression readParameter = EnsureCastExpression(targetParameterExpression!, method.DeclaringType);
 
                 callExpression = Expression.Call(readParameter, (MethodInfo)method, argsExpression);
             }
@@ -201,7 +208,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             ParameterExpression parameterExpression = Expression.Parameter(instanceType, "instance");
             Expression resultExpression;
 
-            MethodInfo getMethod = propertyInfo.GetGetMethod(true);
+            MethodInfo getMethod = propertyInfo.GetGetMethod(true)!;
 
             if (getMethod.IsStatic)
             {
@@ -246,7 +253,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return compiled;
         }
 
-        public override Action<T, object> CreateSet<T>(FieldInfo fieldInfo)
+        public override Action<T, object?> CreateSet<T>(FieldInfo fieldInfo)
         {
             ValidationUtils.ArgumentNotNull(fieldInfo, nameof(fieldInfo));
 
@@ -278,11 +285,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             LambdaExpression lambdaExpression = Expression.Lambda(typeof(Action<T, object>), assignExpression, sourceParameterExpression, valueParameterExpression);
 
-            Action<T, object> compiled = (Action<T, object>)lambdaExpression.Compile();
+            Action<T, object?> compiled = (Action<T, object?>)lambdaExpression.Compile();
             return compiled;
         }
 
-        public override Action<T, object> CreateSet<T>(PropertyInfo propertyInfo)
+        public override Action<T, object?> CreateSet<T>(PropertyInfo propertyInfo)
         {
             ValidationUtils.ArgumentNotNull(propertyInfo, nameof(propertyInfo));
 
@@ -301,7 +308,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             ParameterExpression valueParameter = Expression.Parameter(valueType, "value");
             Expression readValueParameter = EnsureCastExpression(valueParameter, propertyInfo.PropertyType);
 
-            MethodInfo setMethod = propertyInfo.GetSetMethod(true);
+            MethodInfo setMethod = propertyInfo.GetSetMethod(true)!;
 
             Expression setExpression;
             if (setMethod.IsStatic)
@@ -317,7 +324,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             LambdaExpression lambdaExpression = Expression.Lambda(typeof(Action<T, object>), setExpression, instanceParameter, valueParameter);
 
-            Action<T, object> compiled = (Action<T, object>)lambdaExpression.Compile();
+            Action<T, object?> compiled = (Action<T, object?>)lambdaExpression.Compile();
             return compiled;
         }
         

@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -14,16 +15,16 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 {
     internal static class AttributeHelpers
     {
-        private static ReflectionObject _dataTypeReflectionObject;
-        private static ReflectionObject _regexReflectionObject;
-        private static ReflectionObject _maxLengthReflectionObject;
-        private static ReflectionObject _minLengthReflectionObject;
-        private static ReflectionObject _enumTypeReflectionObject;
-        private static ReflectionObject _stringLengthReflectionObject;
-        private static ReflectionObject _rangeReflectionObject;
-        private static ReflectionObject _displayReflectionObject;
-        private static ReflectionObject _displayNameReflectionObject;
-        private static ReflectionObject _descriptionReflectionObject;
+        private static ReflectionObject? _dataTypeReflectionObject;
+        private static ReflectionObject? _regexReflectionObject;
+        private static ReflectionObject? _maxLengthReflectionObject;
+        private static ReflectionObject? _minLengthReflectionObject;
+        private static ReflectionObject? _enumTypeReflectionObject;
+        private static ReflectionObject? _stringLengthReflectionObject;
+        private static ReflectionObject? _rangeReflectionObject;
+        private static ReflectionObject? _displayReflectionObject;
+        private static ReflectionObject? _displayNameReflectionObject;
+        private static ReflectionObject? _descriptionReflectionObject;
 
         private const string DisplayNameAttributeName = "System.ComponentModel.DisplayNameAttribute";
         private const string DescriptionAttributeName = "System.ComponentModel.DescriptionAttribute";
@@ -40,17 +41,16 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         private const string StringLengthAttributeName = "System.ComponentModel.DataAnnotations.StringLengthAttribute";
         private const string EnumDataTypeAttributeName = "System.ComponentModel.DataAnnotations.EnumDataTypeAttribute";
 
-        private static bool GetDisplay(Type type, JsonProperty memberProperty, out string name, out string description)
+        private static bool GetDisplay(Type type, JsonProperty? memberProperty, out string? name, out string? description)
         {
-            Attribute displayAttribute = GetAttributeByNameFromTypeOrProperty(type, memberProperty, DisplayAttributeName, out Type matchingType);
-            if (displayAttribute != null)
+            if (TryGetAttributeByNameFromTypeOrProperty(type, memberProperty, DisplayAttributeName, out Attribute? displayAttribute, out Type? matchingType))
             {
                 if (_displayReflectionObject == null)
                 {
                     _displayReflectionObject = ReflectionObject.Create(matchingType, "GetName", "GetDescription");
                 }
-                name = (string)_displayReflectionObject.GetValue(displayAttribute, "GetName");
-                description = (string)_displayReflectionObject.GetValue(displayAttribute, "GetDescription");
+                name = (string?)_displayReflectionObject.GetValue(displayAttribute, "GetName");
+                description = (string?)_displayReflectionObject.GetValue(displayAttribute, "GetDescription");
                 return true;
             }
 
@@ -59,21 +59,20 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return false;
         }
 
-        public static bool GetDisplayName(Type type, JsonProperty memberProperty, out string displayName)
+        public static bool GetDisplayName(Type type, JsonProperty? memberProperty, out string? displayName)
         {
             if (GetDisplay(type, memberProperty, out displayName, out _) && !string.IsNullOrEmpty(displayName))
             {
                 return true;
             }
 
-            Attribute displayNameAttribute = GetAttributeByNameFromTypeOrProperty(type, memberProperty, DisplayNameAttributeName, out Type matchingType);
-            if (displayNameAttribute != null)
+            if (TryGetAttributeByNameFromTypeOrProperty(type, memberProperty, DisplayNameAttributeName, out Attribute? displayNameAttribute, out Type? matchingType))
             {
                 if (_displayNameReflectionObject == null)
                 {
                     _displayNameReflectionObject = ReflectionObject.Create(matchingType, "DisplayName");
                 }
-                displayName = (string)_displayNameReflectionObject.GetValue(displayNameAttribute, "DisplayName");
+                displayName = (string?)_displayNameReflectionObject.GetValue(displayNameAttribute, "DisplayName");
                 return true;
             }
 
@@ -81,21 +80,20 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return false;
         }
 
-        public static bool GetDescription(Type type, JsonProperty memberProperty, out string description)
+        public static bool GetDescription(Type type, JsonProperty? memberProperty, out string? description)
         {
             if (GetDisplay(type, memberProperty, out _, out description) && !string.IsNullOrEmpty(description))
             {
                 return true;
             }
 
-            Attribute descriptionAttribute = GetAttributeByNameFromTypeOrProperty(type, memberProperty, DescriptionAttributeName, out Type matchingType);
-            if (descriptionAttribute != null)
+            if (TryGetAttributeByNameFromTypeOrProperty(type, memberProperty, DescriptionAttributeName, out Attribute? descriptionAttribute, out Type? matchingType))
             {
                 if (_descriptionReflectionObject == null)
                 {
                     _descriptionReflectionObject = ReflectionObject.Create(matchingType, "Description");
                 }
-                description = (string)_descriptionReflectionObject.GetValue(descriptionAttribute, "Description");
+                description = (string?)_descriptionReflectionObject.GetValue(descriptionAttribute, "Description");
                 return true;
             }
 
@@ -103,12 +101,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return false;
         }
 
-        public static bool GetRange(JsonProperty property, out double minimum, out double maximum)
+        public static bool GetRange(JsonProperty? property, out double minimum, out double maximum)
         {
             if (property != null)
             {
-                Attribute rangeAttribute = GetAttributeByName(property, RangeAttributeName, out Type matchingType);
-                if (rangeAttribute != null)
+                if (TryGetAttributeByName(property, RangeAttributeName, out Attribute? rangeAttribute, out Type? matchingType))
                 {
                     if (_rangeReflectionObject == null)
                     {
@@ -125,12 +122,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return false;
         }
 
-        public static bool GetStringLength(JsonProperty property, out int minimumLength, out int maximumLength)
+        public static bool GetStringLength(JsonProperty? property, out int minimumLength, out int maximumLength)
         {
             if (property != null)
             {
-                Attribute attribute = GetAttributeByName(property, StringLengthAttributeName, out Type matchingType);
-                if (attribute != null)
+                if (TryGetAttributeByName(property, StringLengthAttributeName, out Attribute? attribute, out Type? matchingType))
                 {
                     if (_stringLengthReflectionObject == null)
                     {
@@ -143,11 +139,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     }
 
 #if !NET35
-                    minimumLength = (int)_stringLengthReflectionObject.GetValue(attribute, "MinimumLength");
+                    minimumLength = (int)_stringLengthReflectionObject.GetValue(attribute, "MinimumLength")!;
 #else
                     minimumLength = 0;
 #endif
-                    maximumLength = (int)_stringLengthReflectionObject.GetValue(attribute, "MaximumLength");
+                    maximumLength = (int)_stringLengthReflectionObject.GetValue(attribute, "MaximumLength")!;
                     return true;
                 }
             }
@@ -157,116 +153,110 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return false;
         }
 
-        public static Type GetEnumDataType(JsonProperty property)
+        public static Type? GetEnumDataType(JsonProperty? property)
         {
             if (property != null)
             {
-                Attribute attribute = GetAttributeByName(property, EnumDataTypeAttributeName, out Type matchingType);
-                if (attribute != null)
+                if (TryGetAttributeByName(property, EnumDataTypeAttributeName, out Attribute? attribute, out Type? matchingType))
                 {
                     if (_enumTypeReflectionObject == null)
                     {
                         _enumTypeReflectionObject = ReflectionObject.Create(matchingType, "EnumType");
                     }
-                    return (Type)_enumTypeReflectionObject.GetValue(attribute, "EnumType");
+                    return (Type?)_enumTypeReflectionObject.GetValue(attribute, "EnumType");
                 }
             }
 
             return null;
         }
 
-        public static int? GetMinLength(JsonProperty property)
+        public static int? GetMinLength(JsonProperty? property)
         {
             if (property != null)
             {
-                Attribute minLengthAttribute = GetAttributeByName(property, MinLengthAttributeName, out Type matchingType);
-                if (minLengthAttribute != null)
+                if (TryGetAttributeByName(property, MinLengthAttributeName, out Attribute? minLengthAttribute, out Type? matchingType))
                 {
                     if (_minLengthReflectionObject == null)
                     {
                         _minLengthReflectionObject = ReflectionObject.Create(matchingType, "Length");
                     }
-                    return (int)_minLengthReflectionObject.GetValue(minLengthAttribute, "Length");
+                    return (int)_minLengthReflectionObject.GetValue(minLengthAttribute, "Length")!;
                 }
             }
 
             return null;
         }
 
-        public static int? GetMaxLength(JsonProperty property)
+        public static int? GetMaxLength(JsonProperty? property)
         {
             if (property != null)
             {
-                Attribute maxLengthAttribute = GetAttributeByName(property, MaxLengthAttributeName, out Type matchingType);
-                if (maxLengthAttribute != null)
+                if (TryGetAttributeByName(property, MaxLengthAttributeName, out Attribute? maxLengthAttribute, out Type? matchingType))
                 {
                     if (_maxLengthReflectionObject == null)
                     {
                         _maxLengthReflectionObject = ReflectionObject.Create(matchingType, "Length");
                     }
-                    return (int)_maxLengthReflectionObject.GetValue(maxLengthAttribute, "Length");
+                    return (int)_maxLengthReflectionObject.GetValue(maxLengthAttribute, "Length")!;
                 }
             }
 
             return null;
         }
 
-        public static bool GetRequired(JsonProperty property)
+        public static bool GetRequired(JsonProperty? property)
         {
             if (property != null)
             {
-                Attribute required = GetAttributeByName(property, RequiredAttributeName, out _);
-                return (required != null);
+                return TryGetAttributeByName(property, RequiredAttributeName, out _, out _);
             }
 
             return false;
         }
 
-        public static string GetPattern(JsonProperty property)
+        public static string? GetPattern(JsonProperty? property)
         {
             if (property != null)
             {
-                Attribute regexAttribute = GetAttributeByName(property, RegularExpressionAttributeName, out Type matchingType);
-                if (regexAttribute != null)
+                if (TryGetAttributeByName(property, RegularExpressionAttributeName, out Attribute? regexAttribute, out Type? matchingType))
                 {
                     if (_regexReflectionObject == null)
                     {
                         _regexReflectionObject = ReflectionObject.Create(matchingType, "Pattern");
                     }
-                    return (string)_regexReflectionObject.GetValue(regexAttribute, "Pattern");
+                    return (string?)_regexReflectionObject.GetValue(regexAttribute, "Pattern");
                 }
             }
 
             return null;
         }
 
-        public static string GetFormat(JsonProperty property)
+        public static string? GetFormat(JsonProperty? property)
         {
             if (property != null)
             {
-                if (GetAttributeByName(property, UrlAttributeName, out _) != null)
+                if (TryGetAttributeByName(property, UrlAttributeName, out _, out _))
                 {
                     return Constants.Formats.Uri;
                 }
 
-                if (GetAttributeByName(property, PhoneAttributeName, out _) != null)
+                if (TryGetAttributeByName(property, PhoneAttributeName, out _, out _))
                 {
                     return Constants.Formats.Phone;
                 }
 
-                if (GetAttributeByName(property, EmailAddressAttributeName, out _) != null)
+                if (TryGetAttributeByName(property, EmailAddressAttributeName, out _, out _))
                 {
                     return Constants.Formats.Email;
                 }
 
-                Attribute dataTypeAttribute = GetAttributeByName(property, DataTypeAttributeName, out Type matchingType);
-                if (dataTypeAttribute != null)
+                if (TryGetAttributeByName(property, DataTypeAttributeName, out Attribute? dataTypeAttribute, out Type? matchingType))
                 {
                     if (_dataTypeReflectionObject == null)
                     {
                         _dataTypeReflectionObject = ReflectionObject.Create(matchingType, "DataType");
                     }
-                    string s = _dataTypeReflectionObject.GetValue(dataTypeAttribute, "DataType").ToString();
+                    string s = _dataTypeReflectionObject.GetValue(dataTypeAttribute, "DataType")!.ToString();
                     switch (s)
                     {
                         case "Url":
@@ -288,30 +278,32 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return null;
         }
 
-        private static Attribute GetAttributeByName(JsonProperty property, string name, out Type matchingType)
+        private static bool TryGetAttributeByName(JsonProperty property, string name, [NotNullWhen(true)] out Attribute? attribute, [NotNullWhen(true)] out Type? matchingType)
         {
-            return GetAttributeByName(property.AttributeProvider, name, out matchingType);
+            return TryGetAttributeByName(property.AttributeProvider, name, out attribute, out matchingType);
         }
 
-        private static Attribute GetAttributeByName(IAttributeProvider attributeProvider, string name, out Type matchingType)
+        private static bool TryGetAttributeByName(IAttributeProvider? attributeProvider, string name, [NotNullWhen(true)] out Attribute? attribute, [NotNullWhen(true)] out Type? matchingType)
         {
             if (attributeProvider != null)
             {
                 IList<Attribute> attributes = attributeProvider.GetAttributes(true);
-                foreach (Attribute attribute in attributes)
+                foreach (Attribute a in attributes)
                 {
-                    if (IsMatchingAttribute(attribute.GetType(), name, out matchingType))
+                    if (IsMatchingAttribute(a.GetType(), name, out matchingType))
                     {
-                        return attribute;
+                        attribute = a;
+                        return true;
                     }
                 }
             }
 
+            attribute = null;
             matchingType = null;
-            return null;
+            return false;
         }
 
-        private static bool IsMatchingAttribute(Type attributeType, string name, out Type matchingType)
+        private static bool IsMatchingAttribute(Type attributeType, string name, [NotNullWhen(true)] out Type? matchingType)
         {
             // check that attribute or its base class matches the name
             // e.g. attribute might inherit from DescriptionAttribute
@@ -329,24 +321,16 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return false;
         }
 
-        private static Attribute GetAttributeByNameFromTypeOrProperty(Type type, JsonProperty memberProperty, string name, out Type matchingType)
+        private static bool TryGetAttributeByNameFromTypeOrProperty(Type type, JsonProperty? memberProperty, string name, [NotNullWhen(true)] out Attribute? attribute, [NotNullWhen(true)] out Type? matchingType)
         {
-            matchingType = null;
-            Attribute attribute = null;
-
             // check for property attribute first
-            if (memberProperty != null)
+            if (memberProperty != null && TryGetAttributeByName(memberProperty.AttributeProvider, name, out attribute, out matchingType))
             {
-                attribute = GetAttributeByName(memberProperty.AttributeProvider, name, out matchingType);
+                return true;
             }
 
             // fall back to type attribute
-            if (attribute == null)
-            {
-                attribute = GetAttributeByName(new ReflectionAttributeProvider(type), name, out matchingType);
-            }
-
-            return attribute;
+            return TryGetAttributeByName(new ReflectionAttributeProvider(type), name, out attribute, out matchingType);
         }
     }
 }

@@ -17,10 +17,10 @@ namespace Newtonsoft.Json.Schema
     /// </summary>
     public class ValidationError : IJsonLineInfo
     {
-        internal IList<ValidationError> _childErrors;
-        private IFormattable _formattable;
-        private string _message;
-        private string _extendedMessage;
+        internal IList<ValidationError>? _childErrors;
+        private IFormattable? _formattable;
+        private string? _message;
+        private string? _extendedMessage;
 
         /// <summary>
         /// Gets the message describing the error that occurred.
@@ -31,7 +31,7 @@ namespace Newtonsoft.Json.Schema
             get
             {
                 EnsureMessages();
-                return _message;
+                return _message!;
             }
         }
 
@@ -51,32 +51,32 @@ namespace Newtonsoft.Json.Schema
         /// Gets the path to the JSON where the error occurred.
         /// </summary>
         /// <value>The path to the JSON where the error occurred.</value>
-        public string Path { get; private set; }
+        public string? Path { get; private set; }
 
         /// <summary>
         /// Gets the JSON value when the error occurred.
         /// </summary>
         /// <value>The JSON value when the error occurred.</value>
-        public object Value { get; private set; }
+        public object? Value { get; private set; }
 
         /// <summary>
         /// Gets the <see cref="JSchema"/> that generated the error.
         /// </summary>
         /// <value>The <see cref="JSchema"/> that generated the error.</value>
         [JsonIgnore]
-        public JSchema Schema { get; private set; }
+        public JSchema Schema { get; private set; } = null!; // Always set when created
 
         /// <summary>
         /// Gets the ID of the <see cref="JSchema"/> that generated the error, relative to the root schema.
         /// </summary>
         /// <value>The path of the <see cref="JSchema"/> that generated the error, relative to the root schema.</value>
-        public Uri SchemaId { get; internal set; }
+        public Uri? SchemaId { get; internal set; }
 
         /// <summary>
         /// Gets the base URI of the <see cref="JSchema"/> that generated the error.
         /// </summary>
         /// <value>The base URI of the <see cref="JSchema"/> that generated the error.</value>
-        public Uri SchemaBaseUri { get; private set; }
+        public Uri? SchemaBaseUri { get; private set; }
 
         /// <summary>
         /// Gets the <see cref="ErrorType"/> that generated the error.
@@ -138,7 +138,7 @@ namespace Newtonsoft.Json.Schema
             }
             else
             {
-                string message = _formattable.ToString(null, CultureInfo.InvariantCulture);
+                string message = _formattable!.ToString(null, CultureInfo.InvariantCulture);
 
                 _message = message;
                 _extendedMessage = JSchemaException.FormatMessage(this, Path, message);
@@ -150,10 +150,10 @@ namespace Newtonsoft.Json.Schema
         internal string GetExtendedMessage()
         {
             EnsureMessages();
-            return _extendedMessage;
+            return _extendedMessage!;
         }
 
-        internal static ValidationError CreateValidationError(IFormattable message, ErrorType errorType, JSchema schema, Uri schemaId, object value, IList<ValidationError> childErrors, IJsonLineInfo lineInfo, string path)
+        internal static ValidationError CreateValidationError(IFormattable message, ErrorType errorType, JSchema schema, Uri? schemaId, object? value, IList<ValidationError>? childErrors, IJsonLineInfo? lineInfo, string? path)
         {
             ValidationError error = new ValidationError();
             error._formattable = message;

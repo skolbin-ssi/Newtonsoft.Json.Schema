@@ -15,7 +15,7 @@ namespace Newtonsoft.Json.Schema
     /// </summary>
     public class JSchemaUrlResolver : JSchemaResolver
     {
-        private ICredentials _credentials;
+        private ICredentials? _credentials;
 
 #if DEBUG
         private IDownloader _downloader;
@@ -62,8 +62,23 @@ namespace Newtonsoft.Json.Schema
         /// <param name="context">The schema ID context.</param>
         /// <param name="reference">The schema reference.</param>
         /// <returns>The schema resource for a given schema reference.</returns>
-        public override Stream GetSchemaResource(ResolveSchemaContext context, SchemaReference reference)
+        public override Stream? GetSchemaResource(ResolveSchemaContext context, SchemaReference reference)
         {
+            if (context == null)
+            {
+                throw new ArgumentException(nameof(context));
+            }
+
+            if (reference == null)
+            {
+                throw new ArgumentException(nameof(reference));
+            }
+
+            if (reference.BaseUri == null)
+            {
+                throw new InvalidOperationException("BaseUri must be set on SchemaReference.");
+            }
+
             if (!reference.BaseUri.IsAbsoluteUri)
             {
                 return null;

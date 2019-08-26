@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -32,12 +33,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         }
 
         public static bool TryGetPatternRegex(
-            string pattern,
+            string? pattern,
 #if !(NET35 || NET40)
             TimeSpan? matchTimeout,
 #endif
-            ref Regex regex,
-            ref string errorMessage)
+            [NotNullWhen(true)] ref Regex? regex,
+            [NotNullWhen(false)] ref string? errorMessage)
         {
             if (regex == null
 #if !(NET35 || NET40)
