@@ -11,16 +11,16 @@ using System.Linq;
 
 namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 {
-    internal class IfThenElseScope : ConditionalScope
+    internal sealed class IfThenElseScope : ConditionalScope
     {
-        public ConditionalContext ThenContext;
-        public ConditionalContext ElseContext;
+        public ConditionalContext? ThenContext;
+        public ConditionalContext? ElseContext;
 
-        public JSchema If;
-        public JSchema Then;
-        public JSchema Else;
+        public JSchema? If;
+        public JSchema? Then;
+        public JSchema? Else;
 
-        public override void Initialize(ContextBase context, SchemaScope parent, int initialDepth, ScopeType type)
+        public override void Initialize(ContextBase context, SchemaScope? parent, int initialDepth, ScopeType type)
         {
             base.Initialize(context, parent, initialDepth, type);
 
@@ -32,20 +32,25 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             ElseContext = null;
         }
 
-        protected override bool EvaluateTokenCore(JsonToken token, object value, int depth)
+        protected override bool EvaluateTokenCore(JsonToken token, object? value, int depth)
         {
-            SchemaScope ifScope = GetSchemaScopeBySchema(If, token, value, depth);
+            SchemaScope ifScope = GetSchemaScopeBySchema(If!, token, value, depth)!;
 
             if (ifScope.IsValid)
             {
+                ConditionalContext.TrackEvaluatedSchema(ifScope.Schema);
+
                 if (Then != null)
                 {
-                    SchemaScope thenScope = GetSchemaScopeBySchema(Then, token, value, depth);
+                    SchemaScope thenScope = GetSchemaScopeBySchema(Then, token, value, depth)!;
 
                     if (!thenScope.IsValid)
                     {
-                        ConditionalContext context = (ConditionalContext)thenScope.Context;
-                        RaiseError($"JSON does not match schema from 'then'.", ErrorType.Then, Then, null, context.Errors);
+                        RaiseError($"JSON does not match schema from 'then'.", ErrorType.Then, Then, null, thenScope.GetValidationErrors());
+                    }
+                    else
+                    {
+                        ConditionalContext.TrackEvaluatedSchema(thenScope.Schema);
                     }
                 }
             }
@@ -53,12 +58,15 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             {
                 if (Else != null)
                 {
-                    SchemaScope elseScope = GetSchemaScopeBySchema(Else, token, value, depth);
+                    SchemaScope elseScope = GetSchemaScopeBySchema(Else, token, value, depth)!;
 
                     if (!elseScope.IsValid)
                     {
-                        ConditionalContext context = (ConditionalContext)elseScope.Context;
-                        RaiseError($"JSON does not match schema from 'else'.", ErrorType.Else, Else, null, context.Errors);
+                        RaiseError($"JSON does not match schema from 'else'.", ErrorType.Else, Else, null, elseScope.GetValidationErrors());
+                    }
+                    else
+                    {
+                        ConditionalContext.TrackEvaluatedSchema(elseScope.Schema);
                     }
                 }
             }
@@ -68,14 +76,14 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
         public void InitializeScopes(JsonToken token, int scopeIndex)
         {
-            InitializeScope(token, scopeIndex, If, ConditionalContext);
+            InitializeScope(token, scopeIndex, If!, ConditionalContext);
             if (Then != null)
             {
-                InitializeScope(token, scopeIndex, Then, ThenContext);
+                InitializeScope(token, scopeIndex, Then, ThenContext!);
             }
             if (Else != null)
             {
-                InitializeScope(token, scopeIndex, Else, ElseContext);
+                InitializeScope(token, scopeIndex, Else, ElseContext!);
             }
         }
 
@@ -85,7 +93,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             int scopeCurrentIndex = scopeIndex;
 
             // check to see whether a scope with the same schema exists
-            SchemaScope childScope = GetExistingSchemaScope(schema, ref scopeCurrentIndex);
+            SchemaScope? childScope = GetExistingSchemaScope(schema, ref scopeCurrentIndex);
 
             if (childScope == null)
             {

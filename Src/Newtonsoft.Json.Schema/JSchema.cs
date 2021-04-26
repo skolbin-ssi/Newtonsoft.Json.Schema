@@ -5,6 +5,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Text.RegularExpressions;
@@ -27,6 +29,7 @@ namespace Newtonsoft.Json.Schema
     /// An in-memory representation of a JSON Schema.
     /// </summary>
     [JsonConverter(typeof(JSchemaConverter))]
+    [DebuggerDisplay("{DebuggerDisplay,nq}")]
     public class JSchema : IJsonLineInfo, IIdentiferScope
     {
 #if DEBUG
@@ -35,49 +38,58 @@ namespace Newtonsoft.Json.Schema
 #endif
 
         internal bool DeprecatedRequired { get; set; }
-        internal JSchemaReader InternalReader { get; set; }
+        internal JSchemaReader? InternalReader { get; set; }
+        internal bool HasNonRefContent { get; set; }
 
-        internal Dictionary<string, JToken> _extensionData;
-        internal JSchemaCollection _items;
-        internal JSchemaCollection _anyOf;
-        internal JSchemaCollection _allOf;
-        internal JSchemaCollection _oneOf;
-        internal JSchemaDependencyDictionary _dependencies;
-        internal List<JToken> _enum;
-        internal JSchemaDictionary _properties;
-        internal JSchemaDictionary _patternProperties;
-        internal List<string> _required;
-        internal List<JsonValidator> _validators;
+        internal Dictionary<string, JToken>? _extensionData;
+        internal JSchemaCollection? _items;
+        internal JSchemaCollection? _anyOf;
+        internal JSchemaCollection? _allOf;
+        internal JSchemaCollection? _oneOf;
+        internal JSchemaDependencyDictionary? _dependencies;
+        internal List<JToken>? _enum;
+        internal JSchemaDictionary? _properties;
+        internal JSchemaDictionary? _patternProperties;
+        internal List<string>? _required;
+        internal List<JsonValidator>? _validators;
+        internal Dictionary<string, IList<string>>? _dependentRequired;
+        internal JSchemaDictionary? _dependentSchemas;
 
         private int _lineNumber;
         private int _linePosition;
 
         // this is used when the schema path is built
         // store the original reference to reset nested path back to this "root"
-        internal Uri _referencedAs;
+        internal Uri? _referencedAs;
 
-        private string _pattern;
-        private Regex _patternRegex;
-        private string _patternError;
-        private Uri _id;
+        private string? _pattern;
+        private Regex? _patternRegex;
+        private string? _patternError;
+        private Uri? _id;
+        private string? _anchor;
         private bool _itemsPositionValidation;
-        private JSchema _if;
-        private JSchema _then;
-        private JSchema _else;
-        private JSchema _not;
-        private JSchema _contains;
-        internal JSchema _propertyNames;
-        private JSchema _additionalProperties;
-        private JSchema _additionalItems;
-        private JSchemaPatternDictionary _internalPatternProperties;
+        private JSchema? _ref;
+        private JSchema? _if;
+        private JSchema? _then;
+        private JSchema? _else;
+        private JSchema? _not;
+        private JSchema? _contains;
+        internal JSchema? _propertyNames;
+        private JSchema? _additionalProperties;
+        private JSchema? _unevaluatedProperties;
+        private JSchema? _additionalItems;
+        private JSchema? _unevaluatedItems;
+        private JSchemaPatternDictionary? _internalPatternProperties;
 
-        internal Uri BaseUri;
-        internal string Path;
+        internal Uri? BaseUri;
+        internal string? Path;
 
-        internal event Action<JSchema> Changed;
+        internal event Action<JSchema>? Changed;
         internal readonly KnownSchemaCollection KnownSchemas;
         internal JSchemaState State;
         private double? _multipleOf;
+        internal bool? _allowAdditionalProperties;
+        internal bool? _allowAdditionalItems;
 
         internal void OnChildChanged(JSchema changedSchema)
         {
@@ -111,13 +123,14 @@ namespace Newtonsoft.Json.Schema
 
         internal IEnumerable<PatternSchema> GetPatternSchemas()
         {
+            ValidationUtils.Assert(_internalPatternProperties != null);
             return _internalPatternProperties.GetPatternSchemas();
         }
 
         /// <summary>
         /// Gets or sets the $schema. This value will only be read from JSON and written to JSON if the <see cref="JSchema"/> is the root schema.
         /// </summary>
-        public Uri SchemaVersion { get; set; }
+        public Uri? SchemaVersion { get; set; }
 
         /// <summary>
         /// Gets or sets a flag indicating whether this schema is <c>true</c> and always valid, or <c>false</c> and always invalid.
@@ -129,12 +142,43 @@ namespace Newtonsoft.Json.Schema
         /// Gets or sets the $ref. This property is used when reading or writing referenced schemas without resolving them.
         /// Validating JSON with a schema that has a not null <see cref="Reference"/> value will error.
         /// </summary>
-        public Uri Reference { get; set; }
+        public Uri? Reference { get; set; }
+
+        /// <summary>
+        /// Gets or sets the $ref schema.
+        /// </summary>
+        public JSchema? Ref
+        {
+            get => _ref;
+            set => SetSchema(ref _ref, value);
+        }
+
+        /// <summary>
+        /// Gets or sets the $recursiveRef.
+        /// </summary>
+        public Uri? RecursiveReference { get; set; }
+
+        internal bool HasReference => Reference != null || RecursiveReference != null;
+
+        /// <summary>
+        /// Gets or sets the $recursiveAnchor.
+        /// </summary>
+        public bool? RecursiveAnchor { get; set; }
+
+        internal Uri? ResolvedId { get; private set; }
+        internal bool Root { get; set; }
+
+        Uri? IIdentiferScope.ScopeId => ResolvedId;
+
+        bool IIdentiferScope.Root => Root;
+
+        // TODO - improve in next spec
+        string? IIdentiferScope.DynamicAnchor => RecursiveAnchor == true ? bool.TrueString : null;
 
         /// <summary>
         /// Gets or sets the schema ID.
         /// </summary>
-        public Uri Id
+        public Uri? Id
         {
             get => _id;
             set
@@ -142,6 +186,24 @@ namespace Newtonsoft.Json.Schema
                 if (!UriComparer.Instance.Equals(value, _id))
                 {
                     _id = value;
+                    ResolvedId = SchemaDiscovery.CombineIdAndAnchor(_id, _anchor);
+                    OnSelfChanged();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets the schema anchor.
+        /// </summary>
+        public string? Anchor
+        {
+            get => _anchor;
+            set
+            {
+                if (value != _anchor)
+                {
+                    _anchor = value;
+                    ResolvedId = SchemaDiscovery.CombineIdAndAnchor(_id, _anchor);
                     OnSelfChanged();
                 }
             }
@@ -157,7 +219,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets or sets the default value.
         /// </summary>
         /// <value>The default value.</value>
-        public JToken Default { get; set; }
+        public JToken? Default { get; set; }
 
         /// <summary>
         /// Gets the object property <see cref="JSchema"/>s.
@@ -284,7 +346,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets the If schema.
         /// </summary>
         /// <value>The If schema.</value>
-        public JSchema If
+        public JSchema? If
         {
             get => _if;
             set => SetSchema(ref _if, value);
@@ -294,7 +356,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets the Then schema.
         /// </summary>
         /// <value>The Then schema.</value>
-        public JSchema Then
+        public JSchema? Then
         {
             get => _then;
             set => SetSchema(ref _then, value);
@@ -304,7 +366,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets the Else schema.
         /// </summary>
         /// <value>The Else schema.</value>
-        public JSchema Else
+        public JSchema? Else
         {
             get => _else;
             set => SetSchema(ref _else, value);
@@ -314,7 +376,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets the Not schema.
         /// </summary>
         /// <value>The Not schema.</value>
-        public JSchema Not
+        public JSchema? Not
         {
             get => _not;
             set => SetSchema(ref _not, value);
@@ -324,7 +386,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets the Contains schema.
         /// </summary>
         /// <value>The Contains schema.</value>
-        public JSchema Contains
+        public JSchema? Contains
         {
             get => _contains;
             set => SetSchema(ref _contains, value);
@@ -334,13 +396,13 @@ namespace Newtonsoft.Json.Schema
         /// Gets the PropertyNames schema.
         /// </summary>
         /// <value>The PropertyNames schema.</value>
-        public JSchema PropertyNames
+        public JSchema? PropertyNames
         {
             get => _propertyNames;
             set => SetSchema(ref _propertyNames, value);
         }
 
-        private void SetSchema(ref JSchema schema, JSchema newSchema)
+        private void SetSchema(ref JSchema? schema, JSchema? newSchema)
         {
             if (schema != newSchema)
             {
@@ -350,7 +412,11 @@ namespace Newtonsoft.Json.Schema
                 }
 
                 schema = newSchema;
-                schema.Changed += OnChildChanged;
+
+                if (schema != null)
+                {
+                    schema.Changed += OnChildChanged;
+                }
 
                 OnSelfChanged();
             }
@@ -377,7 +443,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets or sets the const value.
         /// </summary>
         /// <value>The const value.</value>
-        public JToken Const { get; set; }
+        public JToken? Const { get; set; }
 
         /// <summary>
         /// Gets or sets a flag indicating whether the array items must be unique.
@@ -446,14 +512,26 @@ namespace Newtonsoft.Json.Schema
         public long? MaximumProperties { get; set; }
 
         /// <summary>
+        /// Gets or sets the minimum number of contains matches.
+        /// </summary>
+        /// <value>The minimum number of contains matches.</value>
+        public long? MinimumContains { get; set; }
+
+        /// <summary>
+        /// Gets or sets the maximum number of contains matches.
+        /// </summary>
+        /// <value>The maximum number of contains matches.</value>
+        public long? MaximumContains { get; set; }
+
+        /// <summary>
         /// Gets or sets the content encoding of a string.
         /// </summary>
-        public string ContentEncoding { get; set; }
+        public string? ContentEncoding { get; set; }
 
         /// <summary>
         /// Gets or sets the content media type of a string.
         /// </summary>
-        public string ContentMediaType { get; set; }
+        public string? ContentMediaType { get; set; }
 
         /// <summary>
         /// Gets or sets a value that indicates whether the data is write only.
@@ -489,8 +567,6 @@ namespace Newtonsoft.Json.Schema
         /// </summary>
         public JSchema()
         {
-            AllowAdditionalProperties = true;
-            AllowAdditionalItems = true;
             KnownSchemas = new KnownSchemaCollection();
 #if DEBUG
             Interlocked.Increment(ref LastDebugId);
@@ -505,8 +581,11 @@ namespace Newtonsoft.Json.Schema
         /// <returns>A <see cref="JToken"/> associated with the <see cref="JSchema"/>.</returns>
         public static implicit operator JToken(JSchema s)
         {
+            JSchemaAnnotation annotation = new JSchemaAnnotation();
+            annotation.RegisterSchema(null, s);
+
             JObject token = new JObject();
-            token.AddAnnotation(new JSchemaAnnotation(s));
+            token.AddAnnotation(annotation);
 
             return token;
         }
@@ -516,12 +595,14 @@ namespace Newtonsoft.Json.Schema
         /// </summary>
         /// <param name="t">The token.</param>
         /// <returns>The <see cref="JSchema"/> associated with the <see cref="JToken"/>.</returns>
-        public static explicit operator JSchema(JToken t)
+        public static explicit operator JSchema?(JToken t)
         {
-            JSchemaAnnotation annotation = t.Annotation<JSchemaAnnotation>();
-            if (annotation != null)
+            JSchemaAnnotation? annotation = t.Annotation<JSchemaAnnotation>();
+            JSchema? schema = null;
+
+            if (annotation?.TryGetSingle(out schema) ?? false)
             {
-                return annotation.Schema;
+                return schema;
             }
 
             throw new JSchemaException("Cannot convert JToken to JSchema. No schema is associated with this token.");
@@ -549,7 +630,7 @@ namespace Newtonsoft.Json.Schema
             WriteToInternal(writer, settings);
         }
 
-        private void WriteToInternal(JsonWriter writer, JSchemaWriterSettings settings)
+        private void WriteToInternal(JsonWriter writer, JSchemaWriterSettings? settings)
         {
             JSchemaWriter schemaWriter = new JSchemaWriter(writer, settings);
 
@@ -572,7 +653,7 @@ namespace Newtonsoft.Json.Schema
         /// <returns>The JSON for this schema.</returns>
         public string ToString(SchemaVersion version)
         {
-            JSchemaWriterSettings settings = version != Schema.SchemaVersion.Unset
+            JSchemaWriterSettings? settings = version != Schema.SchemaVersion.Unset
                 ? new JSchemaWriterSettings { Version = version }
                 : null;
 
@@ -591,7 +672,7 @@ namespace Newtonsoft.Json.Schema
             return ToStringInternal(settings);
         }
 
-        private string ToStringInternal(JSchemaWriterSettings settings)
+        private string ToStringInternal(JSchemaWriterSettings? settings)
         {
             StringWriter writer = new StringWriter(CultureInfo.InvariantCulture);
             JsonTextWriter jsonWriter = new JsonTextWriter(writer);
@@ -605,12 +686,12 @@ namespace Newtonsoft.Json.Schema
         /// <summary>
         /// Gets or sets the title of the schema.
         /// </summary>
-        public string Title { get; set; }
+        public string? Title { get; set; }
 
         /// <summary>
         /// Gets or sets the description of the schema.
         /// </summary>
-        public string Description { get; set; }
+        public string? Description { get; set; }
 
         /// <summary>
         /// Gets or sets the multiple of.
@@ -633,7 +714,7 @@ namespace Newtonsoft.Json.Schema
         /// Gets or sets the pattern.
         /// </summary>
         /// <value>The pattern.</value>
-        public string Pattern
+        public string? Pattern
         {
             get => _pattern;
             set
@@ -652,9 +733,11 @@ namespace Newtonsoft.Json.Schema
 #if !(NET35 || NET40)
             TimeSpan? matchTimeout,
 #endif
-            out Regex regex,
-            out string errorMessage)
+            [NotNullWhen(true)] out Regex? regex,
+            [NotNullWhen(false)] out string? errorMessage)
         {
+            ValidationUtils.Assert(_pattern != null);
+
             bool result = RegexHelpers.TryGetPatternRegex(
                 _pattern,
 #if !(NET35 || NET40)
@@ -685,13 +768,35 @@ namespace Newtonsoft.Json.Schema
         }
 
         /// <summary>
-        /// Gets or sets the <see cref="JSchema"/> for additional properties.
+        /// Gets the dependent required properties.
         /// </summary>
-        /// <value>The <see cref="JSchema"/> for additional properties.</value>
-        public JSchema AdditionalProperties
+        public IDictionary<string, IList<string>> DependentRequired
         {
-            get => _additionalProperties;
-            set => SetSchema(ref _additionalProperties, value);
+            get
+            {
+                if (_dependentRequired == null)
+                {
+                    _dependentRequired = new Dictionary<string, IList<string>>();
+                }
+
+                return _dependentRequired;
+            }
+        }
+
+        /// <summary>
+        /// Gets the dependent schemas.
+        /// </summary>
+        public IDictionary<string, JSchema> DependentSchemas
+        {
+            get
+            {
+                if (_dependentSchemas == null)
+                {
+                    _dependentSchemas = new JSchemaDictionary(this);
+                }
+
+                return _dependentSchemas;
+            }
         }
 
         /// <summary>
@@ -713,18 +818,72 @@ namespace Newtonsoft.Json.Schema
         }
 
         /// <summary>
+        /// Gets or sets the <see cref="JSchema"/> for additional properties.
+        /// </summary>
+        /// <value>The <see cref="JSchema"/> for additional properties.</value>
+        public JSchema? AdditionalProperties
+        {
+            get => _additionalProperties;
+            set => SetSchema(ref _additionalProperties, value);
+        }
+
+        /// <summary>
         /// Gets or sets a value indicating whether additional properties are allowed.
         /// </summary>
         /// <value>
         /// 	<c>true</c> if additional properties are allowed; otherwise, <c>false</c>.
         /// </value>
-        public bool AllowAdditionalProperties { get; set; }
+        public bool AllowAdditionalProperties
+        {
+            get => _allowAdditionalProperties ?? true;
+            set => _allowAdditionalProperties = value;
+        }
+
+        /// <summary>
+        /// Gets or sets a flag indicating whether <see cref="AllowAdditionalProperties"/> has a value set.
+        /// Setting <see cref="AllowAdditionalPropertiesSpecified"/> to false will clear the set value.
+        /// </summary>
+        public bool AllowAdditionalPropertiesSpecified
+        {
+            get => _allowAdditionalProperties != null;
+            set
+            {
+                if (value && _allowAdditionalProperties == null)
+                {
+                    _allowAdditionalProperties = false;
+                }
+                else if (!value)
+                {
+                    _allowAdditionalProperties = null;
+                }
+            }
+        }
+
+        internal bool HasAdditionalProperties => AllowAdditionalPropertiesSpecified || AdditionalProperties != null;
+
+        /// <summary>
+        /// Gets or sets the <see cref="JSchema"/> for unevaluated properties.
+        /// </summary>
+        /// <value>The <see cref="JSchema"/> for unevaluated properties.</value>
+        public JSchema? UnevaluatedProperties
+        {
+            get => _unevaluatedProperties;
+            set => SetSchema(ref _unevaluatedProperties, value);
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether unevaluated properties are allowed.
+        /// </summary>
+        /// <value>
+        /// 	<c>true</c> if unevaluated properties are allowed; otherwise, <c>false</c>.
+        /// </value>
+        public bool? AllowUnevaluatedProperties { get; set; }
 
         /// <summary>
         /// Gets or sets the <see cref="JSchema"/> for additional items.
         /// </summary>
         /// <value>The <see cref="JSchema"/> for additional items.</value>
-        public JSchema AdditionalItems
+        public JSchema? AdditionalItems
         {
             get => _additionalItems;
             set => SetSchema(ref _additionalItems, value);
@@ -736,13 +895,57 @@ namespace Newtonsoft.Json.Schema
         /// <value>
         /// 	<c>true</c> if additional items are allowed; otherwise, <c>false</c>.
         /// </value>
-        public bool AllowAdditionalItems { get; set; }
+        public bool AllowAdditionalItems
+        {
+            get => _allowAdditionalItems ?? true;
+            set => _allowAdditionalItems = value;
+        }
+
+        /// <summary>
+        /// Gets or sets a flag indicating whether <see cref="AllowAdditionalItems"/> has a value set.
+        /// Setting <see cref="AllowAdditionalItemsSpecified"/> to false will clear the set value.
+        /// </summary>
+        public bool AllowAdditionalItemsSpecified
+        {
+            get => _allowAdditionalItems != null;
+            set
+            {
+                if (value && _allowAdditionalItems == null)
+                {
+                    _allowAdditionalItems = false;
+                }
+                else if (!value)
+                {
+                    _allowAdditionalItems = null;
+                }
+            }
+        }
+
+        internal bool HasAdditionalItems => AllowAdditionalItemsSpecified || AdditionalItems != null;
+
+        /// <summary>
+        /// Gets or sets the <see cref="JSchema"/> for unevaluated items.
+        /// </summary>
+        /// <value>The <see cref="JSchema"/> for unevaluated items.</value>
+        public JSchema? UnevaluatedItems
+        {
+            get => _unevaluatedItems;
+            set => SetSchema(ref _unevaluatedItems, value);
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether unevaluated items are allowed.
+        /// </summary>
+        /// <value>
+        /// 	<c>true</c> if unevaluated items are allowed; otherwise, <c>false</c>.
+        /// </value>
+        public bool? AllowUnevaluatedItems { get; set; }
 
         /// <summary>
         /// Gets or sets the format.
         /// </summary>
         /// <value>The format.</value>
-        public string Format { get; set; }
+        public string? Format { get; set; }
 
         /// <summary>
         /// Gets a <see cref="JsonValidator"/> collection that will be used during validation.
@@ -882,6 +1085,23 @@ namespace Newtonsoft.Json.Schema
         {
             _lineNumber = lineInfo.LineNumber;
             _linePosition = lineInfo.LinePosition;
+        }
+
+        private string DebuggerDisplay
+        {
+            get
+            {
+                if (Reference != null)
+                {
+                    return $"$ref: {Reference}";
+                }
+                if (RecursiveReference != null)
+                {
+                    return $"$recursiveRef: {RecursiveReference}";
+                }
+
+                return ToString();
+            }
         }
     }
 }

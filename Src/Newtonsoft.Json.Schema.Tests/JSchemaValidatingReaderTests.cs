@@ -305,6 +305,24 @@ namespace Newtonsoft.Json.Schema.Tests
         }
 
         [Test]
+        public void ConstLarge_Invalid()
+        {
+            JSchema schema = new JSchema();
+            schema.Const = JObject.Parse("{'const': 9007199254740992}");
+
+            string json = "9007199254740991";
+
+            IList<SchemaValidationEventArgs> errors;
+            JSchemaValidatingReader validatingReader = CreateReader(json, schema, out errors);
+
+            Assert.IsTrue(validatingReader.Read());
+
+            Assert.AreEqual(1, errors.Count);
+            Assert.AreEqual(ErrorType.Const, errors[0].ValidationError.ErrorType);
+            Assert.AreEqual("Value 9007199254740991 does not match const.", errors[0].ValidationError.Message);
+        }
+
+        [Test]
         public void ValidateInteger()
         {
             JSchema schema = new JSchema();
@@ -2965,6 +2983,616 @@ namespace Newtonsoft.Json.Schema.Tests
             validatingReader.Close();
 
             Assert.IsTrue(underlyingReader.IsClosed);
+        }
+
+        [Test]
+        public void ContainsCountGreaterThanMaximumContains()
+        {
+            string schemaJson = @"{
+  ""type"":""array"",
+  ""contains"": {""const"": 1},
+  ""maxContains"":3
+}";
+
+            string json = "[1,1,1,1]";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.StartArray, reader.TokenType);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.EndArray, reader.TokenType);
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("Contains match count 4 exceeds maximum contains count of 3. Path '', line 1, position 9.", validationEventArgs.Message);
+            Assert.AreEqual(ErrorType.MaximumContains, validationEventArgs.ValidationError.ErrorType);
+            Assert.AreEqual(null, validationEventArgs.ValidationError.Value);
+        }
+
+        [Test]
+        public void ContainsCountGreaterThanMaximumContains_WithOneNoMatch()
+        {
+            string schemaJson = @"{
+  ""type"":""array"",
+  ""contains"": {""const"": 1},
+  ""maxContains"":3
+}";
+
+            string json = "[1,1,1,1,0]";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.StartArray, reader.TokenType);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.EndArray, reader.TokenType);
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("Contains match count 4 exceeds maximum contains count of 3. Path '', line 1, position 11.", validationEventArgs.Message);
+            Assert.AreEqual(ErrorType.MaximumContains, validationEventArgs.ValidationError.ErrorType);
+            Assert.AreEqual(1, validationEventArgs.ValidationError.ChildErrors.Count);
+        }
+
+        [Test]
+        public void ContainsCountLessThanMinimumContains()
+        {
+            string schemaJson = @"{
+  ""type"":""array"",
+  ""contains"": {""const"": 1},
+  ""minContains"":3
+}";
+
+            string json = "[1,1]";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.StartArray, reader.TokenType);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.EndArray, reader.TokenType);
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("Contains match count 2 is less than minimum contains count of 3. Path '', line 1, position 5.", validationEventArgs.Message);
+            Assert.AreEqual(ErrorType.MinimumContains, validationEventArgs.ValidationError.ErrorType);
+            Assert.AreEqual(null, validationEventArgs.ValidationError.Value);
+        }
+
+        [Test]
+        public void ContainsCountLessThanMinimumContains_WithOneNoMatch()
+        {
+            string schemaJson = @"{
+  ""type"":""array"",
+  ""contains"": {""const"": 1},
+  ""minContains"":3
+}";
+
+            string json = "[1,1,0]";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.StartArray, reader.TokenType);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.Integer, reader.TokenType);
+
+            Assert.IsTrue(reader.Read());
+            Assert.AreEqual(JsonToken.EndArray, reader.TokenType);
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("Contains match count 2 is less than minimum contains count of 3. Path '', line 1, position 7.", validationEventArgs.Message);
+            Assert.AreEqual(ErrorType.MinimumContains, validationEventArgs.ValidationError.ErrorType);
+            Assert.AreEqual(1, validationEventArgs.ValidationError.ChildErrors.Count);
+        }
+
+        [Test]
+        public void Ref_AlongsideSiblingKeywords_NoMatchAgainstOriginal()
+        {
+            string schemaJson = @"{
+                ""$defs"": {
+                    ""reffed"": {
+                        ""type"": ""array""
+                    }
+                },
+                ""properties"": {
+                    ""foo"": {
+                        ""$ref"": ""#/$defs/reffed"",
+                        ""maxItems"": 2
+                    }
+                }
+            }";
+
+            string json = @"{ ""foo"": [1, 2, 3] }";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            while (reader.Read())
+            {
+            }
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("Array item count 3 exceeds maximum count of 2. Path 'foo', line 1, position 18.", validationEventArgs.Message);
+        }
+
+        [Test]
+        public void Ref_AlongsideSiblingKeywords_NoMatchAgainstRef()
+        {
+            string schemaJson = @"{
+                ""$defs"": {
+                    ""reffed"": {
+                        ""type"": ""array""
+                    }
+                },
+                ""properties"": {
+                    ""foo"": {
+                        ""$ref"": ""#/$defs/reffed"",
+                        ""maxItems"": 2
+                    }
+                }
+            }";
+
+            string json = @"{ ""foo"": 1 }";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            while (reader.Read())
+            {
+            }
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("JSON does not match schema from '$ref'.", validationEventArgs.ValidationError.Message);
+            Assert.AreEqual(ErrorType.Ref, validationEventArgs.ValidationError.ErrorType);
+            Assert.AreEqual(1, validationEventArgs.ValidationError.ChildErrors.Count);
+            Assert.AreEqual("Invalid type. Expected Array but got Integer.", validationEventArgs.ValidationError.ChildErrors[0].Message);
+        }
+
+        [Test]
+        public void SchemaReused_ChildErrorsPropagated()
+        {
+            string schemaJson = @"{
+  ""$schema"": ""http://json-schema.org/draft-07/schema#"",
+  ""type"": ""object"",
+  ""definitions"": {
+    ""allRegionProperties"": {
+      ""required"": [
+        ""Slug"",
+        ""EntityType"",
+        ""Description"",
+        ""CloudSlug""
+      ]
+    }
+  },
+  ""required"": [
+    ""Type""
+  ],
+  ""properties"": {
+    ""Type"": {
+      ""enum"": [
+        ""region"",
+        ""geo"",
+        ""non-regional""
+      ]
+    }
+  },
+  ""oneOf"": [
+    {
+      ""if"": {
+        ""properties"": {
+          ""Type"": {
+            ""enum"": [
+              ""geo""
+            ]
+          }
+        }
+      },
+      ""then"": {
+        ""$ref"": ""#/definitions/allRegionProperties""
+      },
+      ""else"": false
+    },
+    {
+      ""if"": {
+        ""properties"": {
+          ""Type"": {
+            ""enum"": [
+              ""non-regional""
+            ]
+          }
+        }
+      },
+      ""then"": {
+        ""allOf"": [
+          {
+            ""$ref"": ""#/definitions/allRegionProperties""
+          },
+          {
+            ""required"": [
+              ""LocationName"",
+              ""IsActive""
+            ]
+          }
+        ]
+      },
+      ""else"": false
+    }
+  ]
+}";
+
+            string json = @"{
+  ""Type"": ""non-regional"",
+  ""EntityType"": ""RegionEntry"",
+  ""Description"": ""rew Stack Hub"",
+  ""LocationName"": ""Non-Regional"",
+  ""GeoSlug"": ""compare-rew-stack-hub"",
+  ""CloudSlug"": ""public-rew"",
+  ""IsActive"": true
+}";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            while (reader.Read())
+            {
+            }
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("JSON is valid against no schemas from 'oneOf'. Path '', line 9, position 1.", validationEventArgs.Message);
+            Assert.AreEqual("JSON does not match schema from 'then'.", validationEventArgs.ValidationError.ChildErrors[0].Message);
+            Assert.AreEqual("JSON does not match all schemas from 'allOf'. Invalid schema indexes: 0.", validationEventArgs.ValidationError.ChildErrors[0].ChildErrors[0].Message);
+            Assert.AreEqual("Required properties are missing from object: Slug.", validationEventArgs.ValidationError.ChildErrors[0].ChildErrors[0].ChildErrors[0].Message);
+        }
+
+        [Test]
+        public void SchemaReused_Repeated()
+        {
+            string schemaJson = @"{
+  ""$schema"": ""http://json-schema.org/draft-07/schema#"",
+  ""type"": ""object"",
+  ""definitions"": {
+    ""allRegionProperties"": {
+      ""required"": [
+        ""Slug""
+      ]
+    }
+  },
+  ""allOf"": [
+    {
+      ""$ref"": ""#/definitions/allRegionProperties""
+    },
+    {
+      ""$ref"": ""#/definitions/allRegionProperties""
+    },
+    {
+      ""$ref"": ""#/definitions/allRegionProperties""
+    }
+  ]
+}";
+
+            string json = @"{
+}";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            while (reader.Read())
+            {
+            }
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("JSON does not match all schemas from 'allOf'. Invalid schema indexes: 0, 1, 2.", validationEventArgs.ValidationError.Message);
+            Assert.AreEqual(1, validationEventArgs.ValidationError.ChildErrors.Count);
+            Assert.AreEqual("Required properties are missing from object: Slug.", validationEventArgs.ValidationError.ChildErrors[0].Message);
+        }
+
+        [Test]
+        public void RecursiveRef_RecursiveAnchorFalse()
+        {
+            string schemaJson = @"{
+    ""$id"": ""http://localhost:4242/recursiveRef4/schema.json"",
+    ""$recursiveAnchor"": false,
+    ""$defs"": {
+        ""myobject"": {
+            ""$id"": ""myobject.json"",
+            ""$recursiveAnchor"": false,
+            ""anyOf"": [
+                { ""type"": ""string"" },
+                {
+                    ""type"": ""object"",
+                    ""additionalProperties"": { ""$recursiveRef"": ""#"" }
+                }
+            ]
+        }
+    },
+    ""anyOf"": [
+        { ""type"": ""integer"" },
+        { ""$ref"": ""#/$defs/myobject"" }
+    ]
+}";
+
+            string json = @"{ ""foo"": 1 }";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            while (reader.Read())
+            {
+            }
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("JSON does not match any schemas from 'anyOf'.", validationEventArgs.ValidationError.Message);
+
+            Assert.AreEqual(2, validationEventArgs.ValidationError.ChildErrors.Count);
+            Assert.AreEqual("Invalid type. Expected Integer but got Object.", validationEventArgs.ValidationError.ChildErrors[0].Message);
+            Assert.AreEqual("JSON does not match any schemas from 'anyOf'.", validationEventArgs.ValidationError.ChildErrors[1].Message);
+
+            Assert.AreEqual(2, validationEventArgs.ValidationError.ChildErrors[1].ChildErrors.Count);
+            Assert.AreEqual("Invalid type. Expected String but got Object.", validationEventArgs.ValidationError.ChildErrors[1].ChildErrors[0].Message);
+            Assert.AreEqual("JSON does not match any schemas from 'anyOf'.", validationEventArgs.ValidationError.ChildErrors[1].ChildErrors[1].Message);
+        }
+
+        [Test]
+        public void Ref_ResolveToScope()
+        {
+            string schemaJson = @"{
+    ""$id"": ""http://localhost:4242/recursiveRef4/schema.json"",
+    ""$recursiveAnchor"": false,
+    ""$defs"": {
+        ""myobject"": {
+            ""$id"": ""myobject.json"",
+            ""$recursiveAnchor"": false,
+            ""anyOf"": [
+                { ""type"": ""string"" },
+                {
+                    ""type"": ""object"",
+                    ""additionalProperties"": { ""$ref"": ""#"" }
+                }
+            ]
+        }
+    },
+    ""anyOf"": [
+        { ""type"": ""integer"" },
+        { ""$ref"": ""#/$defs/myobject"" }
+    ]
+}";
+
+            string json = @"{ ""foo"": 1 }";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            while (reader.Read())
+            {
+            }
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("JSON does not match any schemas from 'anyOf'.", validationEventArgs.ValidationError.Message);
+
+            Assert.AreEqual(2, validationEventArgs.ValidationError.ChildErrors.Count);
+            Assert.AreEqual("Invalid type. Expected Integer but got Object.", validationEventArgs.ValidationError.ChildErrors[0].Message);
+            Assert.AreEqual("JSON does not match any schemas from 'anyOf'.", validationEventArgs.ValidationError.ChildErrors[1].Message);
+
+            Assert.AreEqual(2, validationEventArgs.ValidationError.ChildErrors[1].ChildErrors.Count);
+            Assert.AreEqual("Invalid type. Expected String but got Object.", validationEventArgs.ValidationError.ChildErrors[1].ChildErrors[0].Message);
+            Assert.AreEqual("JSON does not match any schemas from 'anyOf'.", validationEventArgs.ValidationError.ChildErrors[1].ChildErrors[1].Message);
+        }
+
+        [Test]
+        public void ValidateDynamicRef()
+        {
+            string schemaJson = @"{
+    ""$id"": ""recursiveRef8_main.json"",
+    ""$defs"": {
+        ""inner"": {
+            ""$id"": ""recursiveRef8_inner.json"",
+            ""$recursiveAnchor"": true,
+            ""title"": ""inner"",
+            ""additionalProperties"": {
+                ""$recursiveRef"": ""#""
+            }
+        }
+    },
+    ""if"": {
+        ""propertyNames"": {
+            ""pattern"": ""^[a-m]""
+        }
+    },
+    ""then"": {
+        ""title"": ""any type of node"",
+        ""$id"": ""recursiveRef8_anyLeafNode.json"",
+        ""$recursiveAnchor"": true,
+        ""$ref"": ""recursiveRef8_main.json#/$defs/inner""
+    },
+    ""else"": {
+        ""title"": ""integer node"",
+        ""$id"": ""recursiveRef8_integerNode.json"",
+        ""$recursiveAnchor"": true,
+        ""type"": [ ""object"", ""integer"" ],
+        ""$ref"": ""recursiveRef8_main.json#/$defs/inner""
+    }
+}";
+
+            string json = @"{ ""november"": 1.1 }";
+
+            SchemaValidationEventArgs validationEventArgs = null;
+
+            JSchemaValidatingReader reader = new JSchemaValidatingReader(new JsonTextReader(new StringReader(json)));
+            reader.ValidationEventHandler += (sender, args) => { validationEventArgs = args; };
+            reader.Schema = JSchema.Parse(schemaJson);
+
+            while (reader.Read())
+            {
+            }
+
+            Assert.IsNotNull(validationEventArgs);
+            Assert.AreEqual("JSON does not match schema from 'else'.", validationEventArgs.ValidationError.Message);
+
+            Assert.AreEqual(1, validationEventArgs.ValidationError.ChildErrors.Count);
+            Assert.AreEqual("JSON does not match schema from '$ref'.", validationEventArgs.ValidationError.ChildErrors[0].Message);
+
+            Assert.AreEqual(1, validationEventArgs.ValidationError.ChildErrors[0].ChildErrors.Count);
+            Assert.AreEqual("Invalid type. Expected Integer, Object but got Number.", validationEventArgs.ValidationError.ChildErrors[0].ChildErrors[0].Message);
+        }
+
+        [Test]
+        public void Read_KeyDuplicatedInDependenciesAndDependentSchemas_IgnoreSecond()
+        {
+            string json = @"{
+  ""$schema"": ""http://json-schema.org/draft-07/schema"",
+  ""$id"": ""http://api.example.com/profile.json"",
+  ""title"": ""The Root Schema"",
+  ""type"": ""object"",
+  ""required"": [
+    ""minimum"",
+    ""workspace-v""
+  ],
+  ""properties"": {
+    ""minimum"": {
+      ""type"": ""object"",
+      ""required"": [
+        ""width_px"",
+        ""height_px""
+      ],
+      ""properties"": {
+        ""width_px"": {
+          ""type"": ""integer""
+        },
+        ""height_px"": {
+          ""type"": ""integer""
+        }
+      }
+    },
+    ""workspace-v"": {
+      ""type"": ""object"",
+      ""required"": [
+        ""x_px"",
+        ""y_px"",
+        ""width_px"",
+        ""height_px"",
+        ""width_mm"",
+        ""height_mm""
+      ],
+      ""properties"": {
+        ""x_px"": {
+          ""type"": ""integer""
+        },
+        ""y_px"": {
+          ""type"": ""integer""
+        },
+        ""width_px"": {
+          ""type"": ""integer""
+        },
+        ""height_px"": {
+          ""type"": ""integer""
+        },
+        ""width_mm"": {
+          ""type"": ""integer""
+        },
+        ""height_mm"": {
+          ""type"": ""integer""
+        }
+      }
+    },
+    ""widgets"": {
+      ""type"": ""array"",
+      ""minProperties"": 1,
+      ""uniqueItems"": true,
+      ""items"": {
+        ""type"": ""string"",
+        ""pattern"": ""\\b(?:color|color_picker|center|resize|orientation)\\b$""
+      }
+    }
+  },
+  ""dependencies"": {
+    ""widgets"": {
+      ""orientation"": {
+        ""properties"": {
+          ""workspace-h"": { ""type"": ""string"" }
+        },
+        ""required"": [""workspace-h""]
+      }
+    }
+  },
+  ""dependentSchemas"": {
+    ""widgets"": {
+      ""properties"": {
+        ""workspace-h"": {""type"": ""string""}
+      }
+    }
+  }
+}";
+
+            JSchema s = JSchema.Parse(json);
+
+            JObject o = new JObject();
+            Assert.IsFalse(o.IsValid(s));
         }
     }
 

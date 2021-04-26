@@ -13,20 +13,20 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
 {
     internal class JSchemaDiscovery
     {
-        private readonly JSchema _rootSchema;
+        private readonly JSchema? _rootSchema;
         private readonly KnownSchemaState _state;
         private readonly List<SchemaPath> _pathStack;
 
-        public List<ValidationError> ValidationErrors { get; set; }
+        public List<ValidationError>? ValidationErrors { get; set; }
 
         public KnownSchemaCollection KnownSchemas { get; }
 
-        public JSchemaDiscovery(JSchema rootSchema)
+        public JSchemaDiscovery(JSchema? rootSchema)
             : this(rootSchema, new KnownSchemaCollection(), KnownSchemaState.External)
         {
         }
 
-        public JSchemaDiscovery(JSchema rootSchema, KnownSchemaCollection knownSchemas, KnownSchemaState state)
+        public JSchemaDiscovery(JSchema? rootSchema, KnownSchemaCollection knownSchemas, KnownSchemaState state)
         {
             _rootSchema = rootSchema;
             _state = state;
@@ -34,9 +34,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             KnownSchemas = knownSchemas ?? new KnownSchemaCollection();
         }
 
-        public void Discover(JSchema schema, Uri scopedUri, string path = "#")
+        public void Discover(JSchema schema, Uri? scopedUri, string path = "#")
         {
-            Uri resolvedScopeUri = scopedUri ?? schema.Id ?? new Uri(string.Empty, UriKind.RelativeOrAbsolute);
+            Uri resolvedScopeUri = scopedUri ?? schema.ResolvedId ?? new Uri(string.Empty, UriKind.RelativeOrAbsolute);
 
             _pathStack.Add(new SchemaPath(resolvedScopeUri, schema._referencedAs, string.Empty));
 
@@ -47,7 +47,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
 
         private void DiscoverInternal(JSchema schema, string latestPath, bool isDefinitionSchema = false)
         {
-            if (schema.Reference != null)
+            if (schema.HasReference)
             {
                 return;
             }
@@ -58,7 +58,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
                 : _state;
 
             string scopePath = latestPath;
-            Uri schemaKnownId = GetSchemaIdAndNewScopeId(schema, ref scopePath, out Uri newScopeId);
+            Uri schemaKnownId = GetSchemaIdAndNewScopeId(schema, ref scopePath, out Uri? newScopeId);
 
             if (KnownSchemas.Contains(schema))
             {
@@ -89,11 +89,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             {
                 if (ValidationErrors != null)
                 {
-                    ValidationError error = ValidationError.CreateValidationError($"Duplicate schema id '{schemaKnownId.OriginalString}' encountered.", ErrorType.Id, schema, null, schemaKnownId, null, schema, schema.Path);
+                    ValidationError error = ValidationError.CreateValidationError($"Duplicate schema id '{schemaKnownId.OriginalString}' encountered.", ErrorType.Id, schema, null, schemaKnownId, null, schema, schema.Path!);
                     ValidationErrors.Add(error);
                 }
             }
 
+            ValidationUtils.Assert(newScopeId != null);
             _pathStack.Add(new SchemaPath(newScopeId, schema._referencedAs, scopePath));
 
             // discover should happen in the same order as writer except extension data (e.g. definitions)
@@ -107,9 +108,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
 
             DiscoverSchema(Constants.PropertyNames.AdditionalProperties, schema.AdditionalProperties);
             DiscoverSchema(Constants.PropertyNames.AdditionalItems, schema.AdditionalItems);
+            DiscoverSchema(Constants.PropertyNames.UnevaluatedProperties, schema.UnevaluatedProperties);
+            DiscoverSchema(Constants.PropertyNames.UnevaluatedItems, schema.UnevaluatedItems);
             DiscoverDictionarySchemas(Constants.PropertyNames.Properties, schema._properties);
             DiscoverDictionarySchemas(Constants.PropertyNames.PatternProperties, schema._patternProperties);
             DiscoverDictionarySchemas(Constants.PropertyNames.Dependencies, schema._dependencies);
+            DiscoverDictionarySchemas(Constants.PropertyNames.DependentSchemas, schema._dependentSchemas);
             if (schema.ItemsPositionValidation)
             {
                 DiscoverArraySchemas(Constants.PropertyNames.Items, schema._items);
@@ -121,6 +125,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             DiscoverArraySchemas(Constants.PropertyNames.AllOf, schema._allOf);
             DiscoverArraySchemas(Constants.PropertyNames.AnyOf, schema._anyOf);
             DiscoverArraySchemas(Constants.PropertyNames.OneOf, schema._oneOf);
+            DiscoverSchema(Constants.PropertyNames.Ref, schema.Ref);
             DiscoverSchema(Constants.PropertyNames.Not, schema.Not);
             DiscoverSchema(Constants.PropertyNames.PropertyNamesSchema, schema.PropertyNames);
             DiscoverSchema(Constants.PropertyNames.Contains, schema.Contains);
@@ -131,12 +136,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             _pathStack.RemoveAt(_pathStack.Count - 1);
         }
 
-        private Uri GetSchemaIdAndNewScopeId(JSchema schema, ref string latestPath, out Uri newScopeId)
+        private Uri GetSchemaIdAndNewScopeId(JSchema schema, ref string latestPath, out Uri? newScopeId)
         {
             Uri currentScopeId = _pathStack[_pathStack.Count - 1].ScopeId;
 
             string currentPath;
-            if (schema.Id != null)
+            if (schema.ResolvedId != null)
             {
                 bool parentHash = _pathStack.Any(p => p.ScopeId == currentScopeId && p.Path != null && p.Path.IndexOf('#') != -1);
                 if (parentHash)
@@ -214,9 +219,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             return reference;
         }
 
-        public static Uri ResolveSchemaIdAndScopeId(Uri idScope, JSchema schema, string path, out Uri newScope)
+        public static Uri ResolveSchemaIdAndScopeId(Uri? idScope, JSchema schema, string path, out Uri? newScope)
         {
-            Uri schemaId = schema.Id;
+            Uri? schemaId = schema.ResolvedId;
             Uri knownSchemaId;
             if (schemaId != null)
             {
@@ -250,20 +255,21 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             return knownSchemaId;
         }
 
-        private void DiscoverTokenSchemas(JSchema schema, string name, JToken token, bool isDefinitionSchema = false)
+        private void DiscoverTokenSchemas(JSchema schema, string name, JToken? token, bool isDefinitionSchema = false)
         {
             if (token is JObject o)
             {
-                JSchemaAnnotation annotation = token.Annotation<JSchemaAnnotation>();
-                if (annotation != null)
+                JSchemaAnnotation? annotation = token.Annotation<JSchemaAnnotation>();
+                JSchema? tokenSchema = annotation?.GetSchema(null); // TODO
+                if (tokenSchema != null)
                 {
-                    DiscoverInternal(annotation.Schema, name, isDefinitionSchema);
+                    DiscoverInternal(tokenSchema, name, isDefinitionSchema);
                 }
                 else
                 {
-                    foreach (KeyValuePair<string, JToken> valuePair in o)
+                    foreach (KeyValuePair<string, JToken?> valuePair in o)
                     {
-                        bool isDefinitionsSchema = string.Equals(name, Constants.PropertyNames.Definitions, StringComparison.Ordinal) && schema == _rootSchema;
+                        bool isDefinitionsSchema = Constants.PropertyNames.IsDefinition(name) && schema == _rootSchema;
 
                         DiscoverTokenSchemas(schema, name + "/" + EscapePath(valuePair.Key), valuePair.Value, isDefinitionsSchema);
                     }
@@ -280,7 +286,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             }
         }
 
-        private void DiscoverDictionarySchemas(string name, IDictionary<string, object> schemas)
+        private void DiscoverDictionarySchemas(string name, IDictionary<string, object>? schemas)
         {
             if (schemas != null)
             {
@@ -294,7 +300,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             }
         }
 
-        private void DiscoverDictionarySchemas(string name, IDictionary<string, JSchema> schemas)
+        private void DiscoverDictionarySchemas(string name, IDictionary<string, JSchema>? schemas)
         {
             if (schemas != null)
             {
@@ -305,7 +311,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             }
         }
 
-        private void DiscoverArraySchemas(string name, IList<JSchema> schemas)
+        private void DiscoverArraySchemas(string name, IList<JSchema>? schemas)
         {
             if (schemas != null)
             {
@@ -316,7 +322,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             }
         }
 
-        private void DiscoverSchema(string name, JSchema schema)
+        private void DiscoverSchema(string name, JSchema? schema)
         {
             if (schema != null)
             {

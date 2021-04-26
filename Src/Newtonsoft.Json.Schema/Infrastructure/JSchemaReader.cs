@@ -28,20 +28,21 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         private readonly DeferedSchemaCollection _deferedSchemas;
         private readonly DeferedSchemaCollection _resolvedDeferedSchemas;
         private readonly JSchemaResolver _resolver;
-        private readonly Uri _baseUri;
+        private readonly Uri? _baseUri;
         private readonly bool _validateSchema;
-        private readonly SchemaValidationEventHandler _validationEventHandler;
-        private readonly List<ValidationError> _validationErrors;
-        private readonly IList<JsonValidator> _validators;
+        private readonly SchemaValidationEventHandler? _validationEventHandler;
+        private readonly List<ValidationError>? _validationErrors;
+        private readonly IList<JsonValidator>? _validators;
         private readonly bool _resolveSchemaReferences;
 
-        private Uri _versionUri;
+        private Uri? _versionUri;
         private SchemaVersion _version;
-        private JSchema _validatingSchema;
+        private JSchema? _validatingSchema;
         private bool _isReentrant;
 
-        public JSchema RootSchema { get; set; }
+        public JSchema RootSchema { get; set; } = default!;
         public Dictionary<Uri, JSchema> Cache { get; set; }
+        public JSchemaReader? Parent { get; private set; }
 
         public JSchemaReader(JSchemaResolver resolver)
             : this(new JSchemaReaderSettings { Resolver = resolver })
@@ -124,6 +125,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                         error.SchemaId = knownSchema.Id;
                     }
 
+                    ValidationUtils.Assert(_validationEventHandler != null);
                     _validationEventHandler(this, new SchemaValidationEventArgs(error));
                 }
 
@@ -136,13 +138,13 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return SchemaVersionHelpers.EnsureVersion(_version, minimum, maximum);
         }
 
-        internal JSchema ReadInlineSchema(Action<JSchema> setSchema, JToken inlineToken)
+        internal JSchema ReadInlineSchema(Action<JSchema>? setSchema, JToken inlineToken, Uri? dynamicScope)
         {
-            JTokenPathAnnotation pathAnnotation = inlineToken.Root.Annotation<JTokenPathAnnotation>();
+            JTokenPathAnnotation? pathAnnotation = inlineToken.Root.Annotation<JTokenPathAnnotation>();
             string path;
             if (!string.IsNullOrEmpty(pathAnnotation?.BasePath))
             {
-                path = pathAnnotation.BasePath;
+                path = pathAnnotation!.BasePath;
 
                 if (!string.IsNullOrEmpty(inlineToken.Path))
                 {
@@ -174,19 +176,41 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             LoadAndSetSchema(reader, null, s =>
             {
-                setSchema(s);
-                inlineToken.RemoveAnnotations<JSchemaAnnotation>();
-                inlineToken.AddAnnotation(new JSchemaAnnotation(s));
+                setSchema?.Invoke(s);
+                JSchemaAnnotation? annotation = inlineToken.Annotation<JSchemaAnnotation>();
+                if (annotation == null)
+                {
+                    annotation = new JSchemaAnnotation();
+                    inlineToken.AddAnnotation(annotation);
+                }
+                annotation.RegisterSchema(dynamicScope, s);
             });
 
-            return inlineToken.Annotation<JSchemaAnnotation>().Schema;
+            return inlineToken.Annotation<JSchemaAnnotation>()!.GetSchema(dynamicScope)!;
         }
 
-        internal bool AddDeferedSchema(JSchema target, Action<JSchema> setSchema, JSchema referenceSchema)
+        internal bool AddDeferedSchema(JSchema? target, Action<JSchema> setSchema, JSchema referenceSchema)
         {
-            Uri resolvedReference = ResolveSchemaReference(referenceSchema);
+            Uri? scopeId = ResolveScopeId(out string? scopeDynamicAnchor);
+            Uri resolvedReference = ResolveSchemaReference(scopeId, referenceSchema);
 
-            return AddDeferedSchema(resolvedReference, referenceSchema.Reference, referenceSchema, target, setSchema);
+            ResolveReferenceFromSchema(referenceSchema, scopeDynamicAnchor, out bool isRecursiveReference, out Uri originalReference);
+            return AddDeferedSchema(resolvedReference, originalReference, scopeId, scopeDynamicAnchor, isRecursiveReference ? _identiferScopeStack.ToList() : null, isRecursiveReference, referenceSchema, target, setSchema);
+        }
+
+        private static void ResolveReferenceFromSchema(JSchema referenceSchema, string? scopeDynamicAnchor, out bool isRecursiveReference, out Uri originalReference)
+        {
+            if (referenceSchema.Reference != null)
+            {
+                isRecursiveReference = false;
+                originalReference = referenceSchema.Reference;
+            }
+            else
+            {
+                // If there is no recursive/dynamic anchor then the reference is treated as a standard $ref
+                isRecursiveReference = scopeDynamicAnchor != null;
+                originalReference = referenceSchema.RecursiveReference!;
+            }
         }
 
         private void ReadSchemaProperties(JsonReader reader, JSchema target, bool isRoot)
@@ -196,7 +220,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 switch (reader.TokenType)
                 {
                     case JsonToken.PropertyName:
-                        ProcessSchemaName(ref reader, target, isRoot, (string)reader.Value);
+                        ProcessSchemaName(ref reader, target, isRoot, (string)reader.Value!);
                         break;
                     case JsonToken.Comment:
                         // nom, nom
@@ -227,9 +251,30 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 {
                     DeferedSchema deferedSchema = _deferedSchemas[0];
 
-                    ResolveDeferedSchema(deferedSchema);
+                    JSchemaReader resolvingReader = this;
+                    if (deferedSchema.IsRecursiveReference)
+                    {
+                        while (((IIdentiferScope)resolvingReader.RootSchema).DynamicAnchor == deferedSchema.DynamicAnchor
+                            && resolvingReader.Parent != null
+                            && ((IIdentiferScope)resolvingReader.Parent.RootSchema).DynamicAnchor == deferedSchema.DynamicAnchor)
+                        {
+                            resolvingReader = resolvingReader.Parent;
+                        }
+                    }
 
-                    if (_resolvedDeferedSchemas.TryGetValue(deferedSchema.ResolvedReference, out DeferedSchema previouslyResolvedSchema))
+                    resolvingReader._identiferScopeStack.Add(deferedSchema);
+                    try
+                    {
+                        resolvingReader.ResolveDeferedSchema(deferedSchema);
+                    }
+                    finally
+                    {
+                        resolvingReader._identiferScopeStack.RemoveAt(resolvingReader._identiferScopeStack.Count - 1);
+                    }
+
+                    DeferedSchemaKey deferedSchemaKey = DeferedSchema.CreateKey(deferedSchema);
+
+                    if (_resolvedDeferedSchemas.TryGetValue(deferedSchemaKey, out DeferedSchema? previouslyResolvedSchema))
                     {
                         if (!deferedSchema.Success)
                         {
@@ -259,6 +304,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
         private void ResolveDeferedSchema(DeferedSchema deferedSchema)
         {
+            Uri? dynamicScope = deferedSchema.DynamicAnchor != null ? deferedSchema.ScopeId : null;
             bool found = SchemaDiscovery.FindSchema(
                 s =>
                 {
@@ -275,9 +321,10 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     deferedSchema.SetResolvedSchema(s);
                 },
                 RootSchema,
-                RootSchema.Id,
+                RootSchema.ResolvedId,
                 deferedSchema.ResolvedReference,
                 deferedSchema.OriginalReference,
+                dynamicScope,
                 this,
                 ref _schemaDiscovery);
 
@@ -286,9 +333,10 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 return;
             }
 
-            JSchema resolvedSchema;
+            JSchema? resolvedSchema;
             try
             {
+                ValidationUtils.ArgumentNotNull(deferedSchema.ReferenceSchema.Reference, "Reference");
                 resolvedSchema = ResolvedSchema(deferedSchema.ReferenceSchema.Reference, deferedSchema.ResolvedReference);
             }
             catch (Exception ex)
@@ -312,9 +360,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             LoadAndSetSchema(reader, target, setSchema);
         }
 
-        private void ValidateSchemaStart(JsonReader reader, string name)
+        private void ValidateSchemaStart(JsonReader reader, string? name)
         {
-            string errorMessage = (name == null)
+            string? errorMessage = (name == null)
                 ? "Unexpected token encountered when reading schema. Expected {1}, got {2}."
                 : null;
 
@@ -336,7 +384,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void EnsureRead(JsonReader reader, string name)
+        private void EnsureRead(JsonReader reader, string? name)
         {
             // read to the next non-comment
             while (reader.Read())
@@ -350,14 +398,14 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             throw JSchemaReaderException.Create(reader, _baseUri, "Unexpected end when reading value for '{0}'.".FormatWith(CultureInfo.InvariantCulture, name));
         }
 
-        private void EnsureReadAndToken(JsonReader reader, string name, JsonToken tokenType, string errorMessage = null)
+        private void EnsureReadAndToken(JsonReader reader, string? name, JsonToken tokenType, string? errorMessage = null)
         {
             EnsureRead(reader, name);
 
             EnsureToken(reader, name, tokenType, errorMessage);
         }
 
-        private void EnsureToken(JsonReader reader, string name, JsonToken tokenType, string errorMessage)
+        private void EnsureToken(JsonReader reader, string? name, JsonToken tokenType, string? errorMessage)
         {
             if (reader.TokenType != tokenType)
             {
@@ -365,7 +413,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void EnsureToken(JsonReader reader, string name, List<JsonToken> tokenTypes, string errorMessage)
+        private void EnsureToken(JsonReader reader, string? name, List<JsonToken> tokenTypes, string? errorMessage)
         {
             if (!tokenTypes.Contains(reader.TokenType))
             {
@@ -373,7 +421,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void EnsureReadAndToken(JsonReader reader, string name, List<JsonToken> tokenTypes, string errorMessage = null)
+        private void EnsureReadAndToken(JsonReader reader, string name, List<JsonToken> tokenTypes, string? errorMessage = null)
         {
             EnsureRead(reader, name);
 
@@ -383,7 +431,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         private Uri ReadUri(JsonReader reader, string name)
         {
             EnsureReadAndToken(reader, name, JsonToken.String);
-            string id = (string) reader.Value;
+            string id = (string) reader.Value!;
             return ParseUri(reader, id);
         }
 
@@ -402,13 +450,13 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         private string ReadString(JsonReader reader, string name)
         {
             EnsureReadAndToken(reader, name, JsonToken.String);
-            return (string) reader.Value;
+            return (string) reader.Value!;
         }
 
         private bool ReadBoolean(JsonReader reader, string name)
         {
             EnsureReadAndToken(reader, name, JsonToken.Boolean);
-            return (bool) reader.Value;
+            return (bool) reader.Value!;
         }
 
         private long ReadLong(JsonReader reader, string name)
@@ -458,7 +506,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 switch (reader.TokenType)
                 {
                     case JsonToken.PropertyName:
-                        string name = (string) reader.Value;
+                        string name = (string) reader.Value!;
 
                         if (EnsureVersion(SchemaVersion.Draft6))
                         {
@@ -549,11 +597,25 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             if (reader.TokenType == JsonToken.Boolean)
             {
-                target.AllowAdditionalItems = (bool) reader.Value;
+                target.AllowAdditionalItems = (bool) reader.Value!;
             }
             else
             {
                 LoadAndSetSchema(reader, target, s => target.AdditionalItems = s);
+            }
+        }
+
+        private void ReadUnevaluatedItems(JsonReader reader, JSchema target)
+        {
+            EnsureRead(reader, Constants.PropertyNames.UnevaluatedItems);
+
+            if (reader.TokenType == JsonToken.Boolean)
+            {
+                target.AllowUnevaluatedItems = (bool)reader.Value!;
+            }
+            else
+            {
+                LoadAndSetSchema(reader, target, s => target.UnevaluatedItems = s);
             }
         }
 
@@ -563,11 +625,25 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             if (reader.TokenType == JsonToken.Boolean)
             {
-                target.AllowAdditionalProperties = (bool) reader.Value;
+                target.AllowAdditionalProperties = (bool) reader.Value!;
             }
             else
             {
                 LoadAndSetSchema(reader, target, s => target.AdditionalProperties = s);
+            }
+        }
+
+        private void ReadUnevaluatedProperties(JsonReader reader, JSchema target)
+        {
+            EnsureRead(reader, Constants.PropertyNames.UnevaluatedProperties);
+
+            if (reader.TokenType == JsonToken.Boolean)
+            {
+                target.AllowUnevaluatedProperties = (bool)reader.Value!;
+            }
+            else
+            {
+                LoadAndSetSchema(reader, target, s => target.UnevaluatedProperties = s);
             }
         }
 
@@ -582,7 +658,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     throw JSchemaReaderException.Create(reader, _baseUri, "Unexpected token encountered when reading value for 'required'. Expected StartArray, got Boolean.");
                 }
 
-                target.DeprecatedRequired = (bool) reader.Value;
+                target.DeprecatedRequired = (bool) reader.Value!;
             }
             else
             {
@@ -617,7 +693,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void ReadTokenArray(JsonReader reader, string name, ref List<JToken> values)
+        private void ReadTokenArray(JsonReader reader, string name, [NotNull] ref List<JToken>? values)
         {
             EnsureReadAndToken(reader, name, JsonToken.StartArray);
 
@@ -655,12 +731,42 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 switch (reader.TokenType)
                 {
                     case JsonToken.String:
-                        values.Add((string) reader.Value);
+                        values.Add((string) reader.Value!);
                         break;
                     case JsonToken.Comment:
                         // nom nom nom
                         break;
                     case JsonToken.EndArray:
+                        return;
+                    default:
+                        throw JSchemaReaderException.Create(reader, _baseUri, "Unexpected token when reading '{0}': {1}".FormatWith(CultureInfo.InvariantCulture, name, reader.TokenType));
+                }
+            }
+
+            throw JSchemaReaderException.Create(reader, _baseUri, "Unexpected end when reading '{0}'.".FormatWith(CultureInfo.InvariantCulture, name));
+        }
+
+        private void ReadObjectOfStringArrays(JsonReader reader, string name, IDictionary<string, IList<string>> result)
+        {
+            EnsureReadAndToken(reader, name, JsonToken.StartObject);
+
+            while (reader.Read())
+            {
+                switch (reader.TokenType)
+                {
+                    case JsonToken.PropertyName:
+                        string propertyName = (string)reader.Value!;
+
+                        EnsureReadAndToken(reader, propertyName, JsonToken.StartArray);
+
+                        // use last property when duplicates are defined
+                        ReadStringArray(reader, propertyName, out List<string> l);
+                        result[propertyName] = l;
+                        break;
+                    case JsonToken.Comment:
+                        // nom, nom
+                        break;
+                    case JsonToken.EndObject:
                         return;
                     default:
                         throw JSchemaReaderException.Create(reader, _baseUri, "Unexpected token when reading '{0}': {1}".FormatWith(CultureInfo.InvariantCulture, name, reader.TokenType));
@@ -681,7 +787,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 switch (reader.TokenType)
                 {
                     case JsonToken.PropertyName:
-                        string name = (string) reader.Value;
+                        string name = (string) reader.Value!;
 
                         List<JsonToken> validDependencyTokens = EnsureVersion(SchemaVersion.Draft6)
                             ? Constants.DependencyTokens
@@ -704,7 +810,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
                             dependencies[name] = new List<string>
                             {
-                                (string) reader.Value
+                                (string) reader.Value!
                             };
                         }
                         break;
@@ -748,7 +854,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
         internal JSchemaType? MapType(JsonReader reader)
         {
-            string typeName = (string) reader.Value;
+            string typeName = (string) reader.Value!;
 
             if (!Constants.JSchemaTypeMapping.TryGetValue(typeName, out JSchemaType mappedType))
             {
@@ -766,12 +872,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return mappedType;
         }
 
-        private object ReadType(JsonReader reader, JSchema target, string name)
+        private object? ReadType(JsonReader reader, JSchema target, string name)
         {
             EnsureRead(reader, name);
 
-            List<JSchemaType> types = new List<JSchemaType>();
-            JSchemaCollection typeSchemas = null;
+            List<JSchemaType>? types = new List<JSchemaType>();
+            JSchemaCollection? typeSchemas = null;
             bool isAny = false;
 
             switch (reader.TokenType)
@@ -798,7 +904,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                                     }
                                     else
                                     {
-                                        types.Add(t.Value);
+                                        types!.Add(t.Value);
                                     }
                                 }
                                 break;
@@ -818,7 +924,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                                 }
 
                                 JSchemaType finalType = JSchemaType.None;
-                                foreach (JSchemaType type in types)
+                                foreach (JSchemaType type in types!)
                                 {
                                     finalType = finalType | type;
                                 }
@@ -830,7 +936,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                                     if (typeSchemas == null)
                                     {
                                         typeSchemas = new JSchemaCollection(target);
-                                        foreach (JSchemaType type in types)
+                                        foreach (JSchemaType type in types!)
                                         {
                                             typeSchemas.Add(new JSchema
                                             {
@@ -858,15 +964,16 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             throw JSchemaReaderException.Create(reader, _baseUri, "Unexpected end when reading schema type.");
         }
 
-        private void LoadAndSetSchema(JsonReader reader, JSchema target, Action<JSchema> setSchema, bool isRoot = false)
+        private void LoadAndSetSchema(JsonReader reader, JSchema? target, Action<JSchema> setSchema, bool isRoot = false)
         {
             // check whether a schema for this token has already been loaded
             if (reader is JTokenReader tokenReader)
             {
-                JSchemaAnnotation schemaAnnotication = tokenReader.CurrentToken.Annotation<JSchemaAnnotation>();
-                if (schemaAnnotication != null)
+                JSchemaAnnotation? schemaAnnotication = tokenReader.CurrentToken!.Annotation<JSchemaAnnotation>();
+                JSchema? previousSchema = schemaAnnotication?.GetSchema(null);
+                if (previousSchema != null)
                 {
-                    setSchema(schemaAnnotication.Schema);
+                    setSchema(previousSchema);
                     tokenReader.Skip();
                     return;
                 }
@@ -875,6 +982,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             JSchema loadingSchema = new JSchema();
             loadingSchema.State = JSchemaState.Loading;
             loadingSchema.BaseUri = _baseUri;
+            loadingSchema.Root = isRoot;
 
             if (reader is IJsonLineInfo lineInfo)
             {
@@ -888,18 +996,35 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             {
                 if (reader.TokenType == JsonToken.Boolean)
                 {
-                    loadingSchema.Valid = (bool)reader.Value;
+                    loadingSchema.Valid = (bool)reader.Value!;
                 }
                 else
                 {
                     ReadSchemaProperties(reader, loadingSchema, isRoot);
                 }
 
-                if (loadingSchema.Reference != null)
+                if (loadingSchema.HasReference)
                 {
-                    Uri resolvedReference = ResolveSchemaReference(loadingSchema);
+                    Uri? scopeId = ResolveScopeId(out string? scopeDynamicAnchor);
+                    ResolveReferenceFromSchema(loadingSchema, scopeDynamicAnchor, out bool isRecursiveReference, out Uri originalReference);
 
-                    if (AddDeferedSchema(resolvedReference, loadingSchema.Reference, loadingSchema, target, setSchema))
+                    if (isRecursiveReference)
+                    {
+                        // Outer most matching dynamic anchor in scope
+                        for (int i = 0; i < _identiferScopeStack.Count; i++)
+                        {
+                            IIdentiferScope current = _identiferScopeStack[i];
+                            if (current.ScopeId != null && current.DynamicAnchor == scopeDynamicAnchor)
+                            {
+                                scopeId = current.ScopeId;
+                                break;
+                            }
+                        }
+                    }
+
+                    Uri resolvedReference = ResolveSchemaReference(scopeId, loadingSchema);
+
+                    if (AddDeferedSchema(resolvedReference, originalReference, scopeId, scopeDynamicAnchor, isRecursiveReference ? _identiferScopeStack.ToList() : null, isRecursiveReference, loadingSchema, target, setSchema))
                     {
                         return;
                     }
@@ -928,14 +1053,26 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private bool AddDeferedSchema(Uri resolvedReference, Uri originalReference, JSchema referenceSchema, JSchema target, Action<JSchema> setSchema)
+        private bool AddDeferedSchema(Uri resolvedReference, Uri originalReference, Uri? scopeId, string? dynamicAnchor, List<IIdentiferScope>? identiferScopeStack, bool isRecursiveReference, JSchema referenceSchema, JSchema? target, Action<JSchema> setSchema)
         {
-            if (_resolvedDeferedSchemas.TryGetValue(resolvedReference, out DeferedSchema deferedSchema))
+            DeferedSchemaKey deferedSchemaKey = new DeferedSchemaKey(resolvedReference, dynamicAnchor != null ? scopeId : null);
+
+            if (_resolvedDeferedSchemas.TryGetValue(deferedSchemaKey, out DeferedSchema? deferedSchema))
             {
+                // schema has already been successfully resolved
                 if (deferedSchema.Success)
                 {
-                    // schema has already been successfully resolved
-                    setSchema(deferedSchema.ResolvedSchema);
+                    JSchema resolvedSchema = deferedSchema.ResolvedSchema;
+                    if (referenceSchema.HasNonRefContent && EnsureVersion(SchemaVersion.Draft2019_09))
+                    {
+                        referenceSchema.Ref = resolvedSchema;
+                        referenceSchema.Reference = null;
+                        referenceSchema.RecursiveReference = null;
+
+                        resolvedSchema = referenceSchema;
+                    }
+
+                    setSchema(resolvedSchema);
                     return true;
                 }
                 else
@@ -946,18 +1083,40 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
             else
             {
-                if (!_deferedSchemas.TryGetValue(resolvedReference, out deferedSchema))
+                if (!_deferedSchemas.TryGetValue(deferedSchemaKey, out deferedSchema))
                 {
-                    deferedSchema = new DeferedSchema(resolvedReference, originalReference, referenceSchema);
+                    bool supportsRef = EnsureVersion(SchemaVersion.Draft2019_09);
+
+                    deferedSchema = new DeferedSchema(resolvedReference, originalReference, scopeId, dynamicAnchor, identiferScopeStack, isRecursiveReference, referenceSchema, supportsRef);
                     _deferedSchemas.Add(deferedSchema);
                 }
 
-                deferedSchema.AddSchemaSet(setSchema, target);
+                Action<JSchema> updatedSetSchema = s =>
+                {
+                    SetResolvedSchema(referenceSchema, setSchema, s, deferedSchema);
+                };
+
+                deferedSchema.AddSchemaSet(updatedSetSchema, target);
                 return false;
             }
         }
 
-        private JSchema ResolvedSchema(Uri schemaId, Uri resolvedSchemaId)
+        internal void SetResolvedSchema(JSchema referenceSchema, Action<JSchema> setSchema, JSchema resolvedSchema, DeferedSchema deferedSchema)
+        {
+            bool supportsRef = EnsureVersion(SchemaVersion.Draft2019_09);
+            if (supportsRef && referenceSchema.HasReference && referenceSchema.HasNonRefContent)
+            {
+                referenceSchema.Ref = resolvedSchema;
+                referenceSchema.Reference = null;
+                referenceSchema.RecursiveReference = null;
+            }
+            else
+            {
+                setSchema(resolvedSchema);
+            }
+        }
+
+        private JSchema? ResolvedSchema(Uri schemaId, Uri resolvedSchemaId)
         {
             ResolveSchemaContext context = new ResolveSchemaContext
             {
@@ -975,6 +1134,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 return null;
             }
 
+            ValidationUtils.Assert(schemaReference.BaseUri != null);
+
             if (Cache.ContainsKey(schemaReference.BaseUri))
             {
                 // base URI has already been resolved
@@ -983,7 +1144,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 return _resolver.GetSubschema(schemaReference, cachedSchema);
             }
 
-            Stream schemaData = _resolver.GetSchemaResource(context, schemaReference);
+            Stream? schemaData = _resolver.GetSchemaResource(context, schemaReference);
 
             if (schemaData == null)
             {
@@ -1003,6 +1164,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             JSchemaReader schemaReader = new JSchemaReader(settings);
 
             schemaReader.Cache = Cache;
+            schemaReader.Parent = this;
+            for (int i = 0; i < _identiferScopeStack.Count; i++)
+            {
+                schemaReader._identiferScopeStack.Add(_identiferScopeStack[i]);
+            }
 
             JSchema rootSchema;
             using (StreamReader streamReader = new StreamReader(schemaData))
@@ -1024,32 +1190,45 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return _resolver.GetSubschema(schemaReference, schemaReader.RootSchema);
         }
 
-        private Uri ResolveSchemaReference(JSchema schema)
+        private Uri? ResolveScopeId(out string? dynamicAnchor)
         {
-            Uri resolvedReference = null;
+            dynamicAnchor = null;
+            Uri? scopeId = null;
+
             for (int i = 0; i < _identiferScopeStack.Count; i++)
             {
-                Uri part = _identiferScopeStack[i].Id;
+                IIdentiferScope current = _identiferScopeStack[i];
+                if (current.Root)
+                {
+                    // Clear the scope when moving into a new schema file
+                    scopeId = null;
+                }
+
+                Uri? part = current.ScopeId;
 
                 if (part != null)
                 {
-                    resolvedReference = resolvedReference == null
+                    scopeId = scopeId == null
                         ? part
-                        : SchemaDiscovery.ResolveSchemaId(resolvedReference, part);
+                        : SchemaDiscovery.ResolveSchemaId(scopeId, part);
+                    dynamicAnchor = current.DynamicAnchor;
                 }
             }
 
+            return scopeId;
+        }
+
+        private Uri ResolveSchemaReference(Uri? scopeId, JSchema schema)
+        {
             try
             {
-                resolvedReference = SchemaDiscovery.ResolveSchemaId(resolvedReference, schema.Reference);
+                return SchemaDiscovery.ResolveSchemaId(scopeId, schema.Reference ?? schema.RecursiveReference!);
             }
             catch (Exception ex)
             {
-                string message = "Error resolving schema reference '{0}' in the scope '{1}'. The resolved reference must be a valid URI.".FormatWith(CultureInfo.InvariantCulture, schema.Reference, resolvedReference);
+                string message = "Error resolving schema reference '{0}' in the scope '{1}'. The resolved reference must be a valid URI.".FormatWith(CultureInfo.InvariantCulture, schema.Reference, scopeId);
                 throw JSchemaReaderException.Create(schema, _baseUri, schema.Path, message, ex);
             }
-
-            return resolvedReference;
         }
 
         [SuppressMessage("Microsoft.Globalization", "CA1308:NormalizeStringsToUppercase")]
@@ -1080,6 +1259,15 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 case Constants.PropertyNames.Ref:
                     target.Reference = ReadUri(reader, name);
                     break;
+                case Constants.PropertyNames.RecursiveRef:
+                    target.RecursiveReference = ReadUri(reader, name);
+                    break;
+                case Constants.PropertyNames.RecursiveAnchor:
+                    target.RecursiveAnchor = ReadBoolean(reader, name);
+                    break;
+                case Constants.PropertyNames.Anchor:
+                    target.Anchor = ReadString(reader, name);
+                    break;
                 case Constants.PropertyNames.Properties:
                     target._properties = new JSchemaDictionary(target);
                     ReadProperties(reader, target, target._properties);
@@ -1101,7 +1289,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     break;
                 case Constants.PropertyNames.Type:
                 {
-                    object typeResult = ReadType(reader, target, name);
+                    object typeResult = ReadType(reader, target, name)!;
                     if (typeResult is JSchemaType type)
                     {
                         target.Type = type;
@@ -1214,8 +1402,14 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 case Constants.PropertyNames.AdditionalProperties:
                     ReadAdditionalProperties(reader, target);
                     break;
+                case Constants.PropertyNames.UnevaluatedProperties:
+                    ReadUnevaluatedProperties(reader, target);
+                    break;
                 case Constants.PropertyNames.AdditionalItems:
                     ReadAdditionalItems(reader, target);
+                    break;
+                case Constants.PropertyNames.UnevaluatedItems:
+                    ReadUnevaluatedItems(reader, target);
                     break;
                 case Constants.PropertyNames.PatternProperties:
                     ReadProperties(reader, target, target.PatternProperties);
@@ -1228,10 +1422,10 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 #if !(NET35 || NET40)
                                 null,
 #endif
-                                out Regex _,
-                                out string errorMessage))
+                                out Regex? _,
+                                out string? errorMessage))
                             {
-                                ValidationError error = ValidationError.CreateValidationError($"Could not parse regex pattern '{patternProperty.Pattern}'. Regex parser error: {errorMessage}", ErrorType.PatternProperties, target, null, patternProperty.Pattern, null, target, target.Path);
+                                ValidationError error = ValidationError.CreateValidationError($"Could not parse regex pattern '{patternProperty.Pattern}'. Regex parser error: {errorMessage}", ErrorType.PatternProperties, target, null, patternProperty.Pattern, null, target, target.Path!);
                                 _validationErrors.Add(error);
                             }
                         }
@@ -1242,6 +1436,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     break;
                 case Constants.PropertyNames.Dependencies:
                     ReadDependencies(reader, target);
+                    break;
+                case Constants.PropertyNames.DependentSchemas:
+                    ReadProperties(reader, target, target.DependentSchemas);
+                    break;
+                case Constants.PropertyNames.DependentRequired:
+                    ReadObjectOfStringArrays(reader, Constants.PropertyNames.DependentRequired, target.DependentRequired);
                     break;
                 case Constants.PropertyNames.Minimum:
                     target.Minimum = ReadDouble(reader, name);
@@ -1261,7 +1461,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
                     if (reader.TokenType == JsonToken.Boolean)
                     {
-                        target.ExclusiveMinimum = (bool)reader.Value;
+                        target.ExclusiveMinimum = (bool)reader.Value!;
                     }
                     else
                     {
@@ -1281,7 +1481,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
                     if (reader.TokenType == JsonToken.Boolean)
                     {
-                        target.ExclusiveMaximum = (bool)reader.Value;
+                        target.ExclusiveMaximum = (bool)reader.Value!;
                     }
                     else
                     {
@@ -1300,6 +1500,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     break;
                 case Constants.PropertyNames.MinimumItems:
                     target.MinimumItems = ReadLong(reader, name);
+                    break;
+                case Constants.PropertyNames.MaximumContains:
+                    target.MaximumContains = ReadLong(reader, name);
+                    break;
+                case Constants.PropertyNames.MinimumContains:
+                    target.MinimumContains = ReadLong(reader, name);
                     break;
                 case Constants.PropertyNames.MaximumProperties:
                     if (EnsureVersion(SchemaVersion.Draft4))
@@ -1357,7 +1563,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                             target.Not = new JSchema();
                         }
 
-                        object disallowResult = ReadType(reader, target, name);
+                        object disallowResult = ReadType(reader, target, name)!;
                         if (disallowResult is JSchemaType schemaType)
                         {
                             JSchemaType type = target.Not.Type ?? JSchemaType.None;
@@ -1383,10 +1589,10 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 #if !(NET35 || NET40)
                             null,
 #endif
-                            out Regex _,
-                            out string errorMessage))
+                            out _,
+                            out string? errorMessage))
                         {
-                            ValidationError error = ValidationError.CreateValidationError($"Could not parse regex pattern '{target.Pattern}'. Regex parser error: {errorMessage}", ErrorType.Pattern, target, null, target.Pattern, null, target, target.Path);
+                            ValidationError error = ValidationError.CreateValidationError($"Could not parse regex pattern '{target.Pattern}'. Regex parser error: {errorMessage}", ErrorType.Pattern, target, null, target.Pattern, null, target, target.Path!);
                             _validationErrors.Add(error);
                         }
                     }
@@ -1481,7 +1687,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                             throw JSchemaReaderException.Create(reader, _baseUri, "Unexpected token encountered when reading value for '$schema'. Expected String, got {0}.".FormatWith(CultureInfo.InvariantCulture, reader.TokenType));
                         }
 
-                        target.SchemaVersion = ParseUri(reader, (string)reader.Value);
+                        target.SchemaVersion = ParseUri(reader, (string)reader.Value!);
 
                         _versionUri = target.SchemaVersion;
 
@@ -1521,6 +1727,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     }
                     break;
             }
+
+            if (name != Constants.PropertyNames.Ref && name != Constants.PropertyNames.RecursiveRef)
+            {
+                target.HasNonRefContent = true;
+            }
         }
 
         private void ReadExtensionData(JsonReader reader, JSchema target, string name)
@@ -1533,7 +1744,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             JToken t;
             if (reader is JTokenReader tokenReader)
             {
-                t = tokenReader.CurrentToken;
+                t = tokenReader.CurrentToken!;
                 tokenReader.Skip();
             }
             else
