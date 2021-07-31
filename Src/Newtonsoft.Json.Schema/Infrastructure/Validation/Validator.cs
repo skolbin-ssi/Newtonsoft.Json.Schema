@@ -107,6 +107,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
         private void PopulateSchemaId(ValidationError error)
         {
             ValidationUtils.Assert(Schema != null);
+            
+            if (error.SchemaId != null)
+            {
+                return;
+            }
 
             Uri? schemaId = null;
             for (int i = 0; i < Schema.KnownSchemas.Count; i++)
@@ -177,7 +182,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             {
                 Scope scope = _scopes[i];
 
-                if (!scope.Complete)
+                if (scope.Complete != CompleteState.Completed)
                 {
                     scope.EvaluateToken(token, value, depth);
                 }
@@ -200,7 +205,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             {
                 Scope scope = _scopes[i];
 
-                if (scope.Complete)
+                if (scope.Complete == CompleteState.Completed)
                 {
                     _scopes.RemoveAt(i);
                     _scopesCache.Add(scope);

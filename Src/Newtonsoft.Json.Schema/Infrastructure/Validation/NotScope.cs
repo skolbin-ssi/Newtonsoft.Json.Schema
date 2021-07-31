@@ -13,9 +13,18 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
     {
         protected override bool EvaluateTokenCore(JsonToken token, object? value, int depth)
         {
-            if (GetChildrenAnyValid(token, value, depth))
+            // Special case schema references itself, e.g. { "not": { "ref": "#" } }, and all children are valid. 
+            // Force this kind of schema to always be invalid.
+            if (TryGetChildrenAnyValid(token, value, depth, out bool anyValid))
             {
-                RaiseError($"JSON is valid against schema from 'not'.", ErrorType.Not, ParentSchemaScope.Schema, null, ConditionalContext.Errors);
+                if (anyValid)
+                {
+                    RaiseError($"JSON is valid against schema from 'not'.", ErrorType.Not, ParentSchemaScope.Schema, null, ConditionalContext.Errors);
+                }
+            }
+            else
+            {
+                RaiseCircularDependencyError(ErrorType.Not);
             }
 
             // Note: Schema in not can never be used to indicate evaluated properties/items

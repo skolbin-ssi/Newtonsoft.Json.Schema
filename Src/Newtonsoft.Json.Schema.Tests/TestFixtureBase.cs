@@ -48,16 +48,39 @@ namespace Newtonsoft.Json.Schema.Tests
 
         protected void WriteErrors(IList<ValidationError> errorMessages)
         {
+            var stack = new List<ValidationError>();
+            WriteErrorsInternal(errorMessages, stack);
+        }
+
+        private void WriteErrorsInternal(IList<ValidationError> errorMessages, List<ValidationError> stack)
+        {
             foreach (ValidationError validationError in errorMessages)
             {
-                Console.WriteLine(validationError.GetExtendedMessage());
-                Console.WriteLine(validationError.SchemaId);
-                Console.WriteLine();
+                var indent = new string(' ', stack.Count * 2);
 
-                WriteErrors(validationError.ChildErrors);
+                if (stack.Contains(validationError))
+                {
+                    Console.WriteLine(indent + "LOOP DETECTED FOR:");
+                    WriteError(validationError, indent);
+                    return;
+                }
 
-                Console.WriteLine();
+                stack.Add(validationError);
+
+                WriteError(validationError, indent);
+
+                WriteErrorsInternal(validationError.ChildErrors, stack);
+
+                Console.WriteLine(indent + "---");
+
+                stack.Remove(validationError);
             }
+        }
+
+        private static void WriteError(ValidationError validationError, string indent)
+        {
+            Console.WriteLine(indent + validationError.GetExtendedMessage());
+            Console.WriteLine(indent + validationError.SchemaId + "/" + validationError.ErrorType);
         }
 
         protected void WriteEscapedJson(string json)
@@ -286,8 +309,6 @@ namespace Newtonsoft.Json.Schema.Tests
             try
             {
                 action();
-
-                Assert.Fail("Exception of type {0} expected. No exception thrown.", typeof(TException).Name);
             }
             catch (TException ex)
             {
@@ -308,11 +329,15 @@ namespace Newtonsoft.Json.Schema.Tests
                         throw new Exception("Unexpected exception message." + Environment.NewLine + "Expected one of: " + string.Join(Environment.NewLine, possibleMessages) + Environment.NewLine + "Got: " + ex.Message + Environment.NewLine + Environment.NewLine + ex, ex);
                     }
                 }
+
+                return;
             }
             catch (Exception ex)
             {
                 throw new Exception(string.Format("Exception of type {0} expected; got exception of type {1}.", typeof(TException).Name, ex.GetType().Name), ex);
             }
+
+            Assert.Fail("Exception of type {0} expected. No exception thrown.", typeof(TException).Name);
         }
     }
 }

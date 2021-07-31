@@ -6,7 +6,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
-using System.Linq;
+using System.Text;
 using Newtonsoft.Json.Linq;
 
 namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
@@ -100,9 +100,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             // discover should happen in the same order as writer except extension data (e.g. definitions)
             if (schema._extensionData != null)
             {
+                var pathScopes = new List<string>();
                 foreach (KeyValuePair<string, JToken> valuePair in schema._extensionData)
                 {
-                    DiscoverTokenSchemas(schema, EscapePath(valuePair.Key), valuePair.Value);
+                    pathScopes.Add(EscapePath(valuePair.Key));
+                    DiscoverTokenSchemas(schema, pathScopes, valuePair.Value);
+                    pathScopes.RemoveAt(pathScopes.Count - 1);
                 }
             }
 
@@ -143,7 +146,17 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             string currentPath;
             if (schema.ResolvedId != null)
             {
-                bool parentHash = _pathStack.Any(p => p.ScopeId == currentScopeId && p.Path != null && p.Path.IndexOf('#') != -1);
+                bool parentHash = false;
+                for (int i = 0; i < _pathStack.Count; i++)
+                {
+                    SchemaPath p = _pathStack[i];
+                    if (p.ScopeId == currentScopeId && p.Path != null && p.Path.IndexOf('#') != -1)
+                    {
+                        parentHash = true;
+                        break;
+                    }
+                }
+
                 if (parentHash)
                 {
                     latestPath = string.Empty;
@@ -186,21 +199,15 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
                     }
                 }
 
-                currentPath = StringHelpers.Join("/", currentParts);
-
                 if (!string.IsNullOrEmpty(currentScopeId.OriginalString)
-                    && !currentPath.StartsWith("#", StringComparison.Ordinal))
+                    && (currentParts.Count == 0 || !currentParts[0].StartsWith("#", StringComparison.Ordinal)))
                 {
-                    currentPath = "#/" + currentPath;
+                    currentParts.Insert(0, "#");
                 }
 
-                if (!string.IsNullOrEmpty(currentPath)
-                    && !currentPath.EndsWith("/", StringComparison.Ordinal))
-                {
-                    currentPath += "/";
-                }
+                currentParts.Add(latestPath);
 
-                currentPath += latestPath;
+                currentPath = StringHelpers.Join("/", currentParts);
             }
 
             Uri schemaKnownId = ResolveSchemaIdAndScopeId(currentScopeId, schema, currentPath, out newScopeId);
@@ -255,7 +262,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             return knownSchemaId;
         }
 
-        private void DiscoverTokenSchemas(JSchema schema, string name, JToken? token, bool isDefinitionSchema = false)
+        private void DiscoverTokenSchemas(JSchema schema, List<string> pathScopes, JToken? token, bool isDefinitionSchema = false)
         {
             if (token is JObject o)
             {
@@ -263,15 +270,26 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
                 JSchema? tokenSchema = annotation?.GetSchema(null); // TODO
                 if (tokenSchema != null)
                 {
+                    string name;
+                    if (pathScopes.Count == 1)
+                    {
+                        name = pathScopes[0];
+                    }
+                    else
+                    {
+                        name = StringHelpers.Join("/", pathScopes);
+                    }
                     DiscoverInternal(tokenSchema, name, isDefinitionSchema);
                 }
                 else
                 {
                     foreach (KeyValuePair<string, JToken?> valuePair in o)
                     {
-                        bool isDefinitionsSchema = Constants.PropertyNames.IsDefinition(name) && schema == _rootSchema;
+                        bool isDefinitionsSchema = pathScopes.Count == 1 && Constants.PropertyNames.IsDefinition(pathScopes[0]) && schema == _rootSchema;
 
-                        DiscoverTokenSchemas(schema, name + "/" + EscapePath(valuePair.Key), valuePair.Value, isDefinitionsSchema);
+                        pathScopes.Add(EscapePath(valuePair.Key));
+                        DiscoverTokenSchemas(schema, pathScopes, valuePair.Value, isDefinitionsSchema);
+                        pathScopes.RemoveAt(pathScopes.Count - 1);
                     }
                 }
             }
@@ -281,7 +299,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
 
                 for (int i = 0; i < l.Count; i++)
                 {
-                    DiscoverTokenSchemas(schema, name + "/" + i.ToString(CultureInfo.InvariantCulture), l[i]);
+                    pathScopes.Add(i.ToString(CultureInfo.InvariantCulture));
+                    DiscoverTokenSchemas(schema, pathScopes, l[i]);
+                    pathScopes.RemoveAt(pathScopes.Count - 1);
                 }
             }
         }
@@ -332,7 +352,16 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
 
         private string EscapePath(string path)
         {
-            return path.Replace("~", "~0").Replace("/", "~1");
+            for (int i = 0; i < path.Length; i++)
+            {
+                if (path[i] == '~' || path[i] == '/')
+                {
+                    // Could be faster but most paths don't need to be escaped.
+                    return path.Replace("~", "~0").Replace("/", "~1");
+                }
+            }
+
+            return path;
         }
     }
 }

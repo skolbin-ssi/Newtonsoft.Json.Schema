@@ -19,7 +19,15 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
         OneOf,
         Not,
         IfThenElse,
-        Ref
+        Ref,
+        DependentSchema
+    }
+
+    internal enum CompleteState
+    {
+        Incomplete,
+        Completing,
+        Completed
     }
 
     internal abstract class Scope
@@ -33,7 +41,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
         public ContextBase Context = default!;
         public SchemaScope? Parent;
         public ScopeType Type;
-        public bool Complete;
+        public CompleteState Complete;
 
         public virtual void Initialize(ContextBase context, SchemaScope? parent, int initialDepth, ScopeType type)
         {
@@ -41,7 +49,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             Parent = parent;
             InitialDepth = initialDepth;
             Type = type;
-            Complete = false;
+            Complete = CompleteState.Incomplete;
 
 #if DEBUG
             Interlocked.Increment(ref LastDebugId);
@@ -72,7 +80,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
         {
             if (EvaluateTokenCore(token, value, depth))
             {
-                Complete = true;
+                Complete = CompleteState.Completed;
             }
         }
 
