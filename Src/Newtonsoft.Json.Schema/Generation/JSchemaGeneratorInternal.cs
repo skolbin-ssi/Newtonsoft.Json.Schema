@@ -27,9 +27,9 @@ namespace Newtonsoft.Json.Schema.Generation
             _typeSchemas = new List<TypeSchema>();
         }
 
-        public JSchema Generate(Type type, Required required)
+        public JSchema Generate(Type type, Required required, JsonProperty? memberProperty)
         {
-            JSchema schema = GenerateInternal(type, required, null, null, null);
+            JSchema schema = GenerateInternal(type, required, memberProperty, null, null);
 
             if (_generator.SchemaLocationHandling == SchemaLocationHandling.Definitions)
             {
@@ -73,7 +73,7 @@ namespace Newtonsoft.Json.Schema.Generation
                     }
 
                     // definition schemas alphabetical ordered
-                    foreach (KeyValuePair<string, JSchema> definitionSchema in definitionsSchemas.OrderBy(s => s.Key))
+                    foreach (KeyValuePair<string, JSchema> definitionSchema in definitionsSchemas.OrderBy(s => s.Key, StringComparer.Ordinal))
                     {
                         definitions[definitionSchema.Key] = definitionSchema.Value;
                     }
@@ -107,9 +107,9 @@ namespace Newtonsoft.Json.Schema.Generation
             return type.Name;
         }
 
-        public JSchema GenerateSubschema(Type type, Required required, JSchemaGenerationProvider? currentGenerationProvider)
+        public JSchema GenerateSubschema(Type type, Required required, JsonProperty? memberProperty, JSchemaGenerationProvider? currentGenerationProvider)
         {
-            JSchema schema = GenerateInternal(type, required, null, null, currentGenerationProvider);
+            JSchema schema = GenerateInternal(type, required, memberProperty, null, currentGenerationProvider);
 
             return schema;
         }
