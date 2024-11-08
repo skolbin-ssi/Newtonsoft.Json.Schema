@@ -21,12 +21,14 @@ using Newtonsoft.Json.Schema.Infrastructure.Discovery;
 
 namespace Newtonsoft.Json.Schema.Infrastructure
 {
-    internal class JSchemaReader
+    internal sealed class JSchemaReader
     {
+        private static readonly List<JsonToken> ValidLongTokens = new List<JsonToken> { JsonToken.Integer, JsonToken.Float };
+
         internal JSchemaDiscovery _schemaDiscovery;
-        internal readonly List<IIdentiferScope> _identiferScopeStack;
-        private readonly DeferedSchemaCollection _deferedSchemas;
-        private readonly DeferedSchemaCollection _resolvedDeferedSchemas;
+        internal readonly IdentifierScopeStack _identifierScopeStack;
+        private readonly DeferredSchemaCollection _deferredSchemas;
+        private readonly DeferredSchemaCollection _resolvedDeferredSchemas;
         private readonly JSchemaResolver _resolver;
         private readonly Uri? _baseUri;
         private readonly bool _validateSchema;
@@ -52,9 +54,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         public JSchemaReader(JSchemaReaderSettings settings)
         {
             Cache = new Dictionary<Uri, JSchema>(UriComparer.Instance);
-            _deferedSchemas = new DeferedSchemaCollection();
-            _resolvedDeferedSchemas = new DeferedSchemaCollection();
-            _identiferScopeStack = new List<IIdentiferScope>();
+            _deferredSchemas = new DeferredSchemaCollection();
+            _resolvedDeferredSchemas = new DeferredSchemaCollection();
+            _identifierScopeStack = new IdentifierScopeStack();
 
             _resolver = settings.Resolver ?? JSchemaDummyResolver.Instance;
             _baseUri = settings.BaseUri;
@@ -71,12 +73,22 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
+        internal void PushIdentifierScope(IIdentifierScope identifierScope)
+        {
+            _identifierScopeStack.Add(identifierScope);
+        }
+
+        internal void PopIdentifierScope()
+        {
+            _identifierScopeStack.RemoveAt(_identifierScopeStack.Count - 1);
+        }
+
         internal JSchema ReadRoot(JsonReader reader)
         {
             return ReadRoot(reader, _resolveSchemaReferences);
         }
 
-        internal JSchema ReadRoot(JsonReader reader, bool resolveDeferedSchemas)
+        internal JSchema ReadRoot(JsonReader reader, bool resolveDeferredSchemas)
         {
             if (reader.TokenType == JsonToken.None || reader.TokenType == JsonToken.Comment)
             {
@@ -101,9 +113,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 }
             }, true);
 
-            if (resolveDeferedSchemas)
+            if (resolveDeferredSchemas)
             {
-                ResolveDeferedSchemas();
+                ResolveDeferredSchemas();
             }
 
             RaiseValidationErrors();
@@ -119,7 +131,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
                 foreach (ValidationError error in _validationErrors)
                 {
-                    KnownSchema knownSchema = _schemaDiscovery.KnownSchemas.SingleOrDefault(s => s.Schema == error.Schema);
+                    // Get first match because the schema could have been added multiple times with duplicate IDs.
+                    KnownSchema knownSchema = _schemaDiscovery.KnownSchemas.FirstOrDefault(s => s.Schema == error.Schema);
                     if (knownSchema != null)
                     {
                         error.SchemaId = knownSchema.Id;
@@ -176,6 +189,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             LoadAndSetSchema(reader, null, s =>
             {
+                s.DynamicLoadScope = dynamicScope;
+
                 setSchema?.Invoke(s);
                 JSchemaAnnotation? annotation = inlineToken.Annotation<JSchemaAnnotation>();
                 if (annotation == null)
@@ -189,27 +204,36 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return inlineToken.Annotation<JSchemaAnnotation>()!.GetSchema(dynamicScope)!;
         }
 
-        internal bool AddDeferedSchema(JSchema? target, Action<JSchema> setSchema, JSchema referenceSchema)
+        internal bool AddDeferredSchema(JSchema? target, Action<JSchema> setSchema, JSchema referenceSchema)
         {
-            Uri? scopeId = ResolveScopeId(out string? scopeDynamicAnchor);
+            Uri? scopeId = ResolveScopeId(out string? scopeDynamicAnchor, out bool couldBeDynamic, out Uri? dynamicScope);
             Uri resolvedReference = ResolveSchemaReference(scopeId, referenceSchema);
 
-            ResolveReferenceFromSchema(referenceSchema, scopeDynamicAnchor, out bool isRecursiveReference, out Uri originalReference);
-            return AddDeferedSchema(resolvedReference, originalReference, scopeId, scopeDynamicAnchor, isRecursiveReference ? _identiferScopeStack.ToList() : null, isRecursiveReference, referenceSchema, target, setSchema);
+            ResolveReferenceFromSchema(referenceSchema, scopeDynamicAnchor, out ReferenceType referenceType, out Uri originalReference);
+            return AddDeferredSchema(resolvedReference, originalReference, scopeId, scopeDynamicAnchor, couldBeDynamic, referenceType, dynamicScope, referenceSchema, target, setSchema);
         }
 
-        private static void ResolveReferenceFromSchema(JSchema referenceSchema, string? scopeDynamicAnchor, out bool isRecursiveReference, out Uri originalReference)
+        private static void ResolveReferenceFromSchema(JSchema referenceSchema, string? scopeDynamicAnchor, out ReferenceType referenceType, out Uri originalReference)
         {
             if (referenceSchema.Reference != null)
             {
-                isRecursiveReference = false;
+                referenceType = ReferenceType.Ref;
                 originalReference = referenceSchema.Reference;
+            }
+            else if (referenceSchema.DynamicReference != null)
+            {
+                referenceType = ReferenceType.DynamicRef;
+                originalReference = referenceSchema.DynamicReference;
+            }
+            else if (referenceSchema.RecursiveReference != null)
+            {
+                // If there is no recursive/dynamic anchor then the reference is treated as a standard $ref
+                referenceType = scopeDynamicAnchor != null ? ReferenceType.RecursiveRef : ReferenceType.Ref;
+                originalReference = referenceSchema.RecursiveReference;
             }
             else
             {
-                // If there is no recursive/dynamic anchor then the reference is treated as a standard $ref
-                isRecursiveReference = scopeDynamicAnchor != null;
-                originalReference = referenceSchema.RecursiveReference!;
+                throw new InvalidOperationException("Couldn't find a reference on schema.");
             }
         }
 
@@ -235,7 +259,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             throw JSchemaReaderException.Create(reader, _baseUri, "Unexpected end when reading schema.");
         }
 
-        public void ResolveDeferedSchemas()
+        public void ResolveDeferredSchemas()
         {
             if (_isReentrant)
             {
@@ -244,57 +268,41 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             _isReentrant = true;
 
-            if (_deferedSchemas.Count > 0)
+            if (_deferredSchemas.Count > 0)
             {
-                // note that defered schemas could be added while resolving
-                while (_deferedSchemas.Count > 0)
+                // note that deferred schemas could be added while resolving
+                while (_deferredSchemas.Count > 0)
                 {
-                    DeferedSchema deferedSchema = _deferedSchemas[0];
+                    DeferredSchema deferredSchema = _deferredSchemas[0];
 
-                    JSchemaReader resolvingReader = this;
-                    if (deferedSchema.IsRecursiveReference)
+                    if (!TryResolveDeferredSchema(this, deferredSchema))
                     {
-                        while (((IIdentiferScope)resolvingReader.RootSchema).DynamicAnchor == deferedSchema.DynamicAnchor
-                            && resolvingReader.Parent != null
-                            && ((IIdentiferScope)resolvingReader.Parent.RootSchema).DynamicAnchor == deferedSchema.DynamicAnchor)
+                        throw JSchemaReaderException.Create(deferredSchema.ReferenceSchema, _baseUri, deferredSchema.ReferenceSchema.Path, "Could not resolve schema reference '{0}'.".FormatWith(CultureInfo.InvariantCulture, deferredSchema.ResolvedReference));
+                    }
+
+                    DeferredSchemaKey deferredSchemaKey = DeferredSchema.CreateKey(deferredSchema);
+
+                    if (_resolvedDeferredSchemas.TryGetValue(deferredSchemaKey, out DeferredSchema? previouslyResolvedSchema))
+                    {
+                        if (!deferredSchema.Success)
                         {
-                            resolvingReader = resolvingReader.Parent;
-                        }
-                    }
-
-                    resolvingReader._identiferScopeStack.Add(deferedSchema);
-                    try
-                    {
-                        resolvingReader.ResolveDeferedSchema(deferedSchema);
-                    }
-                    finally
-                    {
-                        resolvingReader._identiferScopeStack.RemoveAt(resolvingReader._identiferScopeStack.Count - 1);
-                    }
-
-                    DeferedSchemaKey deferedSchemaKey = DeferedSchema.CreateKey(deferedSchema);
-
-                    if (_resolvedDeferedSchemas.TryGetValue(deferedSchemaKey, out DeferedSchema? previouslyResolvedSchema))
-                    {
-                        if (!deferedSchema.Success)
-                        {
-                            throw JSchemaReaderException.Create(previouslyResolvedSchema.ReferenceSchema, _baseUri, previouslyResolvedSchema.ReferenceSchema.Path, "Could not resolve schema reference '{0}'.".FormatWith(CultureInfo.InvariantCulture, deferedSchema.ResolvedReference));
+                            throw JSchemaReaderException.Create(previouslyResolvedSchema.ReferenceSchema, _baseUri, previouslyResolvedSchema.ReferenceSchema.Path, "Could not resolve schema reference '{0}'.".FormatWith(CultureInfo.InvariantCulture, deferredSchema.ResolvedReference));
                         }
                         else
                         {
-                            _resolvedDeferedSchemas.Remove(previouslyResolvedSchema);
+                            _resolvedDeferredSchemas.Remove(previouslyResolvedSchema);
                         }
                     }
 
-                    _resolvedDeferedSchemas.Add(deferedSchema);
-                    _deferedSchemas.Remove(deferedSchema);
+                    _resolvedDeferredSchemas.Add(deferredSchema);
+                    _deferredSchemas.Remove(deferredSchema);
                 }
 
-                foreach (DeferedSchema resolvedDeferedSchema in _resolvedDeferedSchemas)
+                foreach (DeferredSchema resolvedDeferredSchema in _resolvedDeferredSchemas)
                 {
-                    if (!resolvedDeferedSchema.Success)
+                    if (!resolvedDeferredSchema.Success)
                     {
-                        throw JSchemaReaderException.Create(resolvedDeferedSchema.ReferenceSchema, _baseUri, resolvedDeferedSchema.ReferenceSchema.Path, "Could not resolve schema reference '{0}'.".FormatWith(CultureInfo.InvariantCulture, resolvedDeferedSchema.ResolvedReference));
+                        throw JSchemaReaderException.Create(resolvedDeferredSchema.ReferenceSchema, _baseUri, resolvedDeferredSchema.ReferenceSchema.Path, "Could not resolve schema reference '{0}'.".FormatWith(CultureInfo.InvariantCulture, resolvedDeferredSchema.ResolvedReference));
                     }
                 }
             }
@@ -302,55 +310,165 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             _isReentrant = false;
         }
 
-        private void ResolveDeferedSchema(DeferedSchema deferedSchema)
+        private bool TryResolveDeferredSchema(JSchemaReader resolvingReader, DeferredSchema deferredSchema)
         {
-            Uri? dynamicScope = deferedSchema.DynamicAnchor != null ? deferedSchema.ScopeId : null;
-            bool found = SchemaDiscovery.FindSchema(
-                s =>
-                {
-                    // additional json copied to referenced schema
-                    // kind of hacky
-                    if (s != deferedSchema.ReferenceSchema && deferedSchema.ReferenceSchema._extensionData != null)
+            switch (deferredSchema.ReferenceType)
+            {
+                case ReferenceType.Ref:
+                    return TryResolveDeferredSchemaWithScope(resolvingReader, deferredSchema);
+                case ReferenceType.RecursiveRef:
+                    if (deferredSchema.ReferenceType == ReferenceType.RecursiveRef)
                     {
-                        foreach (KeyValuePair<string, JToken> keyValuePair in deferedSchema.ReferenceSchema._extensionData)
+                        while (((IIdentifierScope)resolvingReader.RootSchema).DynamicAnchor == deferredSchema.DynamicAnchor
+                            && resolvingReader.Parent != null
+                            && ((IIdentifierScope)resolvingReader.Parent.RootSchema).DynamicAnchor == deferredSchema.DynamicAnchor)
                         {
-                            s.ExtensionData[keyValuePair.Key] = keyValuePair.Value;
+                            resolvingReader = resolvingReader.Parent;
                         }
                     }
 
-                    deferedSchema.SetResolvedSchema(s);
+                    return TryResolveDeferredSchemaWithScope(resolvingReader, deferredSchema);
+                case ReferenceType.DynamicRef:
+                    // Initial resolve is standard $ref lookup.
+                    deferredSchema.Reset(deferredSchema.ResolvedReference, ReferenceType.Ref);
+                    if (!TryResolveDeferredSchemaWithScope(resolvingReader, deferredSchema))
+                    {
+                        return false;
+                    }
+
+                    // If the resolved schema has the same dynamic anchor then do dynamic lookup.
+                    var resolvedSchema = deferredSchema.ResolvedSchema!;
+                    var originalAnchor = new Uri(JSchemaDiscovery.GetFragment(deferredSchema.OriginalReference), UriKind.Relative);
+                    if (resolvedSchema.DynamicAnchor == originalAnchor.OriginalString.TrimStart('#'))
+                    {
+                        // TODO: There might be a situation where the schema isn't available in the initial reader.
+                        // If that happens then we'll need to add logic to find the right reader to resolve in.
+                        var current = resolvingReader;
+                        while (current.Parent != null)
+                        {
+                            current = current.Parent;
+                        }
+
+                        var currentScopes = new List<IIdentifierScope>();
+                        foreach (var item in deferredSchema.Scopes)
+                        {
+                            currentScopes.Add(item);
+
+                            Uri? scopeId = ResolveScopeId(currentScopes, out string? scopeDynamicAnchor, out bool couldBeDynamic, out Uri? dynamicScope);
+                            Uri resolvedReference = SchemaDiscovery.ResolveSchemaId(scopeId, originalAnchor);
+
+                            deferredSchema.Reset(resolvedReference, ReferenceType.DynamicRef);
+
+                            if (current.TryResolveDeferredSchemaCore(deferredSchema))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    return true;
+                default:
+                    throw new InvalidOperationException("Unexpeceted reference type: " + deferredSchema.ReferenceType);
+            }
+
+            static bool TryResolveDeferredSchemaWithScope(JSchemaReader resolvingReader, DeferredSchema deferredSchema)
+            {
+                int scopesAdded = 0;
+                if (deferredSchema.DynamicAnchor != null)
+                {
+                    // If the deferred schema has a dynamic anchor then all scopes with that dynamic anchor must be available
+                    // Resolving the dynamic anchor starts at the outer most scope.
+                    foreach (var scope in deferredSchema.Scopes)
+                    {
+                        if (scope.DynamicAnchor == deferredSchema.DynamicAnchor)
+                        {
+                            resolvingReader.PushIdentifierScope(scope);
+                            scopesAdded++;
+                        }
+                    }
+                }
+                else
+                {
+                    resolvingReader.PushIdentifierScope(deferredSchema);
+                    scopesAdded++;
+                }
+
+                try
+                {
+                    return resolvingReader.TryResolveDeferredSchemaCore(deferredSchema);
+                }
+                finally
+                {
+                    for (int i = 0; i < scopesAdded; i++)
+                    {
+                        resolvingReader.PopIdentifierScope();
+                    }
+                }
+            }
+        }
+
+        private bool TryResolveDeferredSchemaCore(DeferredSchema deferredSchema)
+        {
+            // We don't want to use the dynamic scope if we're resolving the actual recursive reference.
+            // It resolves back to the original scopeless object
+            Uri? dynamicScope = deferredSchema.DynamicScope;
+
+            FindSchemaContext context = new FindSchemaContext(
+                s =>
+                {
+                    // 2019-09 and later support the $ref property with content.
+                    // In earlier versions copy any additional JSON to the referenced schema.
+                    // Kind of hacky.
+                    if (!EnsureVersion(SchemaVersion.Draft2019_09))
+                    {
+                        if (s != deferredSchema.ReferenceSchema && deferredSchema.ReferenceSchema._extensionData != null)
+                        {
+                            foreach (KeyValuePair<string, JToken> keyValuePair in deferredSchema.ReferenceSchema._extensionData)
+                            {
+                                s.ExtensionData[keyValuePair.Key] = keyValuePair.Value;
+                            }
+                        }
+                    }
+
+                    deferredSchema.SetResolvedSchema(s);
                 },
                 RootSchema,
                 RootSchema.ResolvedId,
-                deferedSchema.ResolvedReference,
-                deferedSchema.OriginalReference,
+                deferredSchema.ResolvedReference,
+                deferredSchema.OriginalReference,
                 dynamicScope,
+                deferredSchema.ReferenceType,
                 this,
-                ref _schemaDiscovery);
+                _schemaDiscovery);
+
+            bool found = SchemaDiscovery.FindSchema(context);
 
             if (found)
             {
-                return;
+                return true;
             }
 
             JSchema? resolvedSchema;
             try
             {
-                ValidationUtils.ArgumentNotNull(deferedSchema.ReferenceSchema.Reference, "Reference");
-                resolvedSchema = ResolvedSchema(deferedSchema.ReferenceSchema.Reference, deferedSchema.ResolvedReference);
+                Uri? reference = GetReference(deferredSchema.ReferenceSchema);
+                if (reference == null)
+                {
+                    throw new InvalidOperationException("The deferred schema's reference schema doesn't have a reference.");
+                }
+                resolvedSchema = ResolvedSchema(reference, deferredSchema.ResolvedReference);
             }
             catch (Exception ex)
             {
-                throw JSchemaReaderException.Create(deferedSchema.ReferenceSchema, _baseUri, deferedSchema.ReferenceSchema.Path, "Error when resolving schema reference '{0}'.".FormatWith(CultureInfo.InvariantCulture, deferedSchema.ReferenceSchema.Reference), ex);
+                throw JSchemaReaderException.Create(deferredSchema.ReferenceSchema, _baseUri, deferredSchema.ReferenceSchema.Path, "Error when resolving schema reference '{0}'.".FormatWith(CultureInfo.InvariantCulture, deferredSchema.ReferenceSchema.Reference), ex);
             }
 
             if (resolvedSchema != null)
             {
-                deferedSchema.SetResolvedSchema(resolvedSchema);
-                return;
+                deferredSchema.SetResolvedSchema(resolvedSchema);
+                return true;
             }
 
-            throw JSchemaReaderException.Create(deferedSchema.ReferenceSchema, _baseUri, deferedSchema.ReferenceSchema.Path, "Could not resolve schema reference '{0}'.".FormatWith(CultureInfo.InvariantCulture, deferedSchema.ResolvedReference));
+            return false;
         }
 
         private void ReadSchema(JsonReader reader, JSchema target, string name, Action<JSchema> setSchema)
@@ -461,7 +579,11 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
         private long ReadLong(JsonReader reader, string name)
         {
-            EnsureReadAndToken(reader, name, JsonToken.Integer);
+            // A long can be an integer or a float with a zero fraction.
+            // https://github.com/json-schema-org/JSON-Schema-Test-Suite/pull/429
+            //
+            // Accept integer and float values here and then validate there is no fraction below.
+            EnsureReadAndToken(reader, name, ValidLongTokens);
 
 #if HAVE_BIG_INTEGER
             if (reader.Value is BigInteger i)
@@ -474,6 +596,20 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 return (long) i;
             }
 #endif
+            if (reader.Value is decimal dec)
+            {
+                if (dec % 1 != 0)
+                {
+                    throw JSchemaReaderException.Create(reader, _baseUri, "Error parsing integer for '{0}'. {1} has a non-zero fraction".FormatWith(CultureInfo.InvariantCulture, name, dec));
+                }
+            }
+            else if (reader.Value is double d)
+            {
+                if (!CompareUtils.ApproxEquals(d % 1, 0))
+                {
+                    throw JSchemaReaderException.Create(reader, _baseUri, "Error parsing integer for '{0}'. {1} has a non-zero fraction".FormatWith(CultureInfo.InvariantCulture, name, d));
+                }
+            }
 
             return Convert.ToInt64(reader.Value, CultureInfo.InvariantCulture);
         }
@@ -550,15 +686,19 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
         }
 
-        private void ReadItems(JsonReader reader, JSchema target)
+        private void ReadItems(JsonReader reader, string name, JSchema target)
         {
-            if (EnsureVersion(SchemaVersion.Draft6))
+            if (EnsureVersion(SchemaVersion.Draft6, SchemaVersion.Draft2019_09))
             {
-                EnsureReadAndToken(reader, Constants.PropertyNames.Items, Constants.ItemsTokens);
+                EnsureReadAndToken(reader, name, Constants.ItemsDraft6Tokens);
+            }
+            else if (EnsureVersion(SchemaVersion.Draft2020_12))
+            {
+                EnsureReadAndToken(reader, name, Constants.ItemsDraft2020_12Tokens);
             }
             else
             {
-                EnsureReadAndToken(reader, Constants.PropertyNames.Items, Constants.ItemsDraft4Tokens);
+                EnsureReadAndToken(reader, name, Constants.ItemsDraft4Tokens);
             }
 
             if (target._items == null)
@@ -574,7 +714,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     target.ItemsPositionValidation = false;
                     break;
                 case JsonToken.StartArray:
-                    PopulateSchemaArray(reader, target, Constants.PropertyNames.Items, target._items);
+                    PopulateSchemaArray(reader, target, name, target._items);
                     target.ItemsPositionValidation = true;
                     break;
                 default:
@@ -591,11 +731,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             PopulateSchemaArray(reader, target, name, schemas);
         }
 
-        private void ReadAdditionalItems(JsonReader reader, JSchema target)
+        private void ReadAdditionalItems(JsonReader reader, string name, JSchema target)
         {
-            EnsureRead(reader, Constants.PropertyNames.AdditionalItems);
+            EnsureRead(reader, name);
 
-            if (reader.TokenType == JsonToken.Boolean)
+            if (EnsureVersion(SchemaVersion.Draft3, SchemaVersion.Draft2019_09) &&
+                reader.TokenType == JsonToken.Boolean)
             {
                 target.AllowAdditionalItems = (bool) reader.Value!;
             }
@@ -973,8 +1114,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             // check whether a schema for this token has already been loaded
             if (reader is JTokenReader tokenReader)
             {
-                JSchemaAnnotation? schemaAnnotication = tokenReader.CurrentToken!.Annotation<JSchemaAnnotation>();
-                JSchema? previousSchema = schemaAnnotication?.GetSchema(null);
+                JSchemaAnnotation? schemaAnnotation = tokenReader.CurrentToken!.Annotation<JSchemaAnnotation>();
+                JSchema? previousSchema = schemaAnnotation?.GetSchema(null);
                 if (previousSchema != null)
                 {
                     setSchema(previousSchema);
@@ -994,7 +1135,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
             loadingSchema.Path = reader.Path;
 
-            _identiferScopeStack.Add(loadingSchema);
+            PushIdentifierScope(loadingSchema);
 
             try
             {
@@ -1005,19 +1146,28 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 else
                 {
                     ReadSchemaProperties(reader, loadingSchema, isRoot);
+
+                    if (!EnsureVersion(SchemaVersion.Draft2019_09))
+                    {
+                        // In older schema versions a $ref value means sibling id has no effect.
+                        if (loadingSchema.HasReference && loadingSchema.Id != null)
+                        {
+                            loadingSchema.Id = null;
+                        }
+                    }
                 }
 
                 if (loadingSchema.HasReference)
                 {
-                    Uri? scopeId = ResolveScopeId(out string? scopeDynamicAnchor);
-                    ResolveReferenceFromSchema(loadingSchema, scopeDynamicAnchor, out bool isRecursiveReference, out Uri originalReference);
+                    Uri? scopeId = ResolveScopeId(out string? scopeDynamicAnchor, out bool couldBeDynamic, out Uri? dynamicScope);
+                    ResolveReferenceFromSchema(loadingSchema, scopeDynamicAnchor, out ReferenceType referenceType, out Uri originalReference);
 
-                    if (isRecursiveReference)
+                    if (referenceType == ReferenceType.RecursiveRef)
                     {
                         // Outer most matching dynamic anchor in scope
-                        for (int i = 0; i < _identiferScopeStack.Count; i++)
+                        for (int i = 0; i < _identifierScopeStack.Count; i++)
                         {
-                            IIdentiferScope current = _identiferScopeStack[i];
+                            IIdentifierScope current = _identifierScopeStack[i];
                             if (current.ScopeId != null && current.DynamicAnchor == scopeDynamicAnchor)
                             {
                                 scopeId = current.ScopeId;
@@ -1028,7 +1178,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
                     Uri resolvedReference = ResolveSchemaReference(scopeId, loadingSchema);
 
-                    if (AddDeferedSchema(resolvedReference, originalReference, scopeId, scopeDynamicAnchor, isRecursiveReference ? _identiferScopeStack.ToList() : null, isRecursiveReference, loadingSchema, target, setSchema))
+                    if (AddDeferredSchema(resolvedReference, originalReference, scopeId, scopeDynamicAnchor, couldBeDynamic, referenceType, dynamicScope, loadingSchema, target, setSchema))
                     {
                         return;
                     }
@@ -1053,25 +1203,26 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             }
             finally
             {
-                _identiferScopeStack.RemoveAt(_identiferScopeStack.Count - 1);
+                PopIdentifierScope();
             }
         }
 
-        private bool AddDeferedSchema(Uri resolvedReference, Uri originalReference, Uri? scopeId, string? dynamicAnchor, List<IIdentiferScope>? identiferScopeStack, bool isRecursiveReference, JSchema referenceSchema, JSchema? target, Action<JSchema> setSchema)
+        private bool AddDeferredSchema(Uri resolvedReference, Uri originalReference, Uri? scopeId, string? dynamicAnchor, bool couldBeDynamic, ReferenceType referenceType, Uri? dynamicScope, JSchema referenceSchema, JSchema? target, Action<JSchema> setSchema)
         {
-            DeferedSchemaKey deferedSchemaKey = new DeferedSchemaKey(resolvedReference, dynamicAnchor != null ? scopeId : null);
+            DeferredSchemaKey deferredSchemaKey = new DeferredSchemaKey(resolvedReference, dynamicScope);
 
-            if (_resolvedDeferedSchemas.TryGetValue(deferedSchemaKey, out DeferedSchema? deferedSchema))
+            if (_resolvedDeferredSchemas.TryGetValue(deferredSchemaKey, out DeferredSchema? deferredSchema))
             {
                 // schema has already been successfully resolved
-                if (deferedSchema.Success)
+                if (deferredSchema.Success)
                 {
-                    JSchema resolvedSchema = deferedSchema.ResolvedSchema;
+                    JSchema resolvedSchema = deferredSchema.ResolvedSchema;
                     if (referenceSchema.HasNonRefContent && EnsureVersion(SchemaVersion.Draft2019_09))
                     {
                         referenceSchema.Ref = resolvedSchema;
                         referenceSchema.Reference = null;
                         referenceSchema.RecursiveReference = null;
+                        referenceSchema.DynamicReference = null;
 
                         resolvedSchema = referenceSchema;
                     }
@@ -1081,31 +1232,31 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 }
                 else
                 {
-                    deferedSchema.AddSchemaSet(setSchema, target);
+                    deferredSchema.AddSchemaSet(setSchema, target);
                     return false;
                 }
             }
             else
             {
-                if (!_deferedSchemas.TryGetValue(deferedSchemaKey, out deferedSchema))
+                if (!_deferredSchemas.TryGetValue(deferredSchemaKey, out deferredSchema))
                 {
                     bool supportsRef = EnsureVersion(SchemaVersion.Draft2019_09);
 
-                    deferedSchema = new DeferedSchema(resolvedReference, originalReference, scopeId, dynamicAnchor, identiferScopeStack, isRecursiveReference, referenceSchema, supportsRef);
-                    _deferedSchemas.Add(deferedSchema);
+                    deferredSchema = new DeferredSchema(resolvedReference, originalReference, scopeId, dynamicAnchor, couldBeDynamic, dynamicScope, referenceType, referenceSchema, supportsRef, _identifierScopeStack.Clone());
+                    _deferredSchemas.Add(deferredSchema);
                 }
 
                 Action<JSchema> updatedSetSchema = s =>
                 {
-                    SetResolvedSchema(referenceSchema, setSchema, s, deferedSchema);
+                    SetResolvedSchema(referenceSchema, setSchema, s, deferredSchema);
                 };
 
-                deferedSchema.AddSchemaSet(updatedSetSchema, target);
+                deferredSchema.AddSchemaSet(updatedSetSchema, target);
                 return false;
             }
         }
 
-        internal void SetResolvedSchema(JSchema referenceSchema, Action<JSchema> setSchema, JSchema resolvedSchema, DeferedSchema deferedSchema)
+        internal void SetResolvedSchema(JSchema referenceSchema, Action<JSchema> setSchema, JSchema resolvedSchema, DeferredSchema deferredSchema)
         {
             bool supportsRef = EnsureVersion(SchemaVersion.Draft2019_09);
             if (supportsRef && referenceSchema.HasReference && referenceSchema.HasNonRefContent)
@@ -1113,6 +1264,15 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                 referenceSchema.Ref = resolvedSchema;
                 referenceSchema.Reference = null;
                 referenceSchema.RecursiveReference = null;
+                referenceSchema.DynamicReference = null;
+            }
+            else if (deferredSchema.ReferenceType == ReferenceType.DynamicRef && referenceSchema.Ref != null)
+            {
+                // Setting a dynamicRef could happen multiple times.
+                // There is an initial match in the current scope which will clear the reference.
+                // Then an optional match could happen if a dynamicAnchor is found in an outer scope.
+                // Because the reference is cleared in the initial match, extra logic is required to correctly set the extra match.
+                referenceSchema.Ref = resolvedSchema;
             }
             else
             {
@@ -1169,9 +1329,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             schemaReader.Cache = Cache;
             schemaReader.Parent = this;
-            for (int i = 0; i < _identiferScopeStack.Count; i++)
+            for (int i = 0; i < _identifierScopeStack.Count; i++)
             {
-                schemaReader._identiferScopeStack.Add(_identiferScopeStack[i]);
+                schemaReader.PushIdentifierScope(_identifierScopeStack[i]);
             }
 
             JSchema rootSchema;
@@ -1184,9 +1344,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure
 
             Cache[schemaReference.BaseUri] = rootSchema;
 
-            // resolve defered schemas after it has been cached to avoid
+            // resolve deferred schemas after it has been cached to avoid
             // stackoverflow on circular references
-            schemaReader.ResolveDeferedSchemas();
+            schemaReader.ResolveDeferredSchemas();
 
             // root schema might have been a reference so update cache again
             Cache[schemaReference.BaseUri] = schemaReader.RootSchema;
@@ -1194,14 +1354,21 @@ namespace Newtonsoft.Json.Schema.Infrastructure
             return _resolver.GetSubschema(schemaReference, schemaReader.RootSchema);
         }
 
-        private Uri? ResolveScopeId(out string? dynamicAnchor)
+        private Uri? ResolveScopeId(out string? dynamicAnchor, out bool couldBeDynamic, out Uri? dynamicScope)
+        {
+            return ResolveScopeId(_identifierScopeStack, out dynamicAnchor, out couldBeDynamic, out dynamicScope);
+        }
+
+        private static Uri? ResolveScopeId(List<IIdentifierScope> stack, out string? dynamicAnchor, out bool couldBeDynamic, out Uri? dynamicScope)
         {
             dynamicAnchor = null;
+            dynamicScope = null;
+            couldBeDynamic = false;
             Uri? scopeId = null;
 
-            for (int i = 0; i < _identiferScopeStack.Count; i++)
+            for (int i = 0; i < stack.Count; i++)
             {
-                IIdentiferScope current = _identiferScopeStack[i];
+                IIdentifierScope current = stack[i];
                 if (current.Root)
                 {
                     // Clear the scope when moving into a new schema file
@@ -1216,6 +1383,25 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                         ? part
                         : SchemaDiscovery.ResolveSchemaId(scopeId, part);
                     dynamicAnchor = current.DynamicAnchor;
+                    couldBeDynamic = current.CouldBeDynamic;
+
+                    if (!couldBeDynamic)
+                    {
+                        // If there is no dynamic anchor on the root of a document then the scope is reset.
+                        if (current.Root)
+                        {
+                            dynamicScope = null;
+                        }
+                    }
+                    else
+                    {
+                        // If there is a dynamic anchor, and there currently isn't a dynamic scope,
+                        // then the current scope becomes the dynamic scope.
+                        if (dynamicScope == null)
+                        {
+                            dynamicScope = scopeId;
+                        }
+                    }
                 }
             }
 
@@ -1226,13 +1412,18 @@ namespace Newtonsoft.Json.Schema.Infrastructure
         {
             try
             {
-                return SchemaDiscovery.ResolveSchemaId(scopeId, schema.Reference ?? schema.RecursiveReference!);
+                return SchemaDiscovery.ResolveSchemaId(scopeId, GetReference(schema)!);
             }
             catch (Exception ex)
             {
                 string message = "Error resolving schema reference '{0}' in the scope '{1}'. The resolved reference must be a valid URI.".FormatWith(CultureInfo.InvariantCulture, schema.Reference, scopeId);
                 throw JSchemaReaderException.Create(schema, _baseUri, schema.Path, message, ex);
             }
+        }
+
+        private static Uri? GetReference(JSchema schema)
+        {
+            return schema.Reference ?? schema.DynamicReference ?? schema.RecursiveReference;
         }
 
         [SuppressMessage("Microsoft.Globalization", "CA1308:NormalizeStringsToUppercase")]
@@ -1250,8 +1441,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                         ReadExtensionData(reader, target, name);
                     }
                     break;
-                case Constants.PropertyNames.IdDraft4:
-                    if (EnsureVersion(SchemaVersion.Draft4))
+                case Constants.PropertyNames.IdDraft3:
+                    if (EnsureVersion(SchemaVersion.Draft3))
                     {
                         target.Id = ReadUri(reader, name);
                     }
@@ -1268,6 +1459,12 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     break;
                 case Constants.PropertyNames.RecursiveAnchor:
                     target.RecursiveAnchor = ReadBoolean(reader, name);
+                    break;
+                case Constants.PropertyNames.DynamicRef:
+                    target.DynamicReference = ReadUri(reader, name);
+                    break;
+                case Constants.PropertyNames.DynamicAnchor:
+                    target.DynamicAnchor = ReadString(reader, name);
                     break;
                 case Constants.PropertyNames.Anchor:
                     target.Anchor = ReadString(reader, name);
@@ -1289,7 +1486,26 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     }
                     break;
                 case Constants.PropertyNames.Items:
-                    ReadItems(reader, target);
+                    // The meaning of "items" changed in 2020-12 to be like "additionalItems".
+                    // Continue to use the old behavior if the schema version is unset.
+                    if (EnsureVersion(SchemaVersion.Draft3, SchemaVersion.Draft2019_09))
+                    {
+                        ReadItems(reader, name, target);
+                    }
+                    else
+                    {
+                        ReadAdditionalItems(reader, name, target);
+                    }
+                    break;
+                case Constants.PropertyNames.PrefixItems:
+                    if (EnsureVersion(SchemaVersion.Draft2020_12))
+                    {
+                        ReadItems(reader, name, target);
+                    }
+                    else
+                    {
+                        ReadExtensionData(reader, target, name);
+                    }
                     break;
                 case Constants.PropertyNames.Type:
                 {
@@ -1410,7 +1626,15 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     ReadUnevaluatedProperties(reader, target);
                     break;
                 case Constants.PropertyNames.AdditionalItems:
-                    ReadAdditionalItems(reader, target);
+                    // The meaning of "items" changed in 2020-12 to be like "additionalItems".
+                    if (EnsureVersion(SchemaVersion.Draft3, SchemaVersion.Draft2019_09))
+                    {
+                        ReadAdditionalItems(reader, name, target);
+                    }
+                    else
+                    {
+                        ReadExtensionData(reader, target, name);
+                    }
                     break;
                 case Constants.PropertyNames.UnevaluatedItems:
                     ReadUnevaluatedItems(reader, target);
@@ -1445,7 +1669,14 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     ReadProperties(reader, target, target.DependentSchemas);
                     break;
                 case Constants.PropertyNames.DependentRequired:
-                    ReadObjectOfStringArrays(reader, Constants.PropertyNames.DependentRequired, target.DependentRequired);
+                    if (EnsureVersion(SchemaVersion.Draft2019_09))
+                    {
+                        ReadObjectOfStringArrays(reader, Constants.PropertyNames.DependentRequired, target.DependentRequired);
+                    }
+                    else
+                    {
+                        goto default;
+                    }
                     break;
                 case Constants.PropertyNames.Minimum:
                     target.Minimum = ReadDouble(reader, name);
@@ -1696,6 +1927,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                         _versionUri = target.SchemaVersion;
 
                         _version = SchemaVersionHelpers.MapSchemaUri(_versionUri);
+                        _schemaDiscovery.SchemaVersion = _version;
 
                         if (_validateSchema)
                         {
@@ -1732,7 +1964,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure
                     break;
             }
 
-            if (name != Constants.PropertyNames.Ref && name != Constants.PropertyNames.RecursiveRef)
+            if (name != Constants.PropertyNames.Ref && name != Constants.PropertyNames.RecursiveRef && name != Constants.PropertyNames.DynamicRef)
             {
                 target.HasNonRefContent = true;
             }

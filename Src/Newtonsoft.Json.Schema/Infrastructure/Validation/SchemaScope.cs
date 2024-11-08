@@ -8,12 +8,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using Newtonsoft.Json.Linq;
 
 namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 {
-    [DebuggerDisplay("{DebuggerDisplay,nq}")]
+    [DebuggerDisplay("{DebuggerDisplay(),nq}")]
     internal abstract class SchemaScope : Scope
     {
         public JSchema Schema = default!;
@@ -52,9 +51,13 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             return false;
         }
 
-        public ConditionalContext CreateConditionalContext()
+        public ConditionalContext CreateConditionalContext(bool useParentTracker = true)
         {
-            return ConditionalContext.Create(Context, ShouldValidateUnevaluated());
+            var conditionalContext = ConditionalContext.Create(Context, ShouldValidateUnevaluated(), useParentTracker);
+#if DEBUG
+            conditionalContext.Scope = this;
+#endif
+            return conditionalContext;
         }
 
         private void AddChildScope(ConditionalScope scope)
@@ -67,9 +70,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             ConditionalChildren.Add(scope);
         }
 
-        internal string DebuggerDisplay => GetType().Name + " - IsValid=" + IsValid + " - Complete=" + Complete
+        internal virtual string DebuggerDisplay() => GetType().Name + " - IsValid=" + IsValid + " - Complete=" + Complete + " - ValidateUnevaluated=" + ShouldValidateUnevaluated()
 #if DEBUG
-                                           + " - SchemaId=" + Schema.DebugId
+                                           + " - SchemaId=" + Schema?.DebugId ?? "(null)"
                                            + " - ScopeId=" + DebugId
 #endif
         ;
@@ -104,14 +107,14 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                     scope = arrayScope;
                     break;
                 default:
-                    PrimativeScope? primativeScope = context.Validator.GetCachedScope<PrimativeScope>(ScopeType.Primitive);
-                    if (primativeScope == null)
+                    PrimitiveScope? primitiveScope = context.Validator.GetCachedScope<PrimitiveScope>(ScopeType.Primitive);
+                    if (primitiveScope == null)
                     {
-                        primativeScope = new PrimativeScope();
+                        primitiveScope = new PrimitiveScope();
                     }
-                    primativeScope.Initialize(context, parent, depth, schema);
+                    primitiveScope.Initialize(context, parent, depth, schema);
 
-                    scope = primativeScope;
+                    scope = primitiveScope;
                     context.Scopes.Add(scope);
                     break;
             }
@@ -176,8 +179,8 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
 
                 notScope.InitializeScopes(token, new List<JSchema> { schema.Not }, context.Scopes.Count - 1);
             }
-            // only makes sense to eval if/then/else when there is an if and either a then or a else
-            if (schema.If != null && (schema.Then != null || schema.Else != null))
+            // Eval if even when there is no then/else because of unevaluated items
+            if (schema.If != null)
             {
                 IfThenElseScope? ifThenElseScope = context.Validator.GetCachedScope<IfThenElseScope>(ScopeType.IfThenElse);
                 if (ifThenElseScope == null)
@@ -188,15 +191,16 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
                 scope.AddChildScope(ifThenElseScope);
 
                 ifThenElseScope.If = schema.If;
+                ifThenElseScope.IfContext = scope.CreateConditionalContext(useParentTracker: false);
                 if (schema.Then != null)
                 {
                     ifThenElseScope.Then = schema.Then;
-                    ifThenElseScope.ThenContext = scope.CreateConditionalContext();
+                    ifThenElseScope.ThenContext = scope.CreateConditionalContext(useParentTracker: false);
                 }
                 if (schema.Else != null)
                 {
                     ifThenElseScope.Else = schema.Else;
-                    ifThenElseScope.ElseContext = scope.CreateConditionalContext();
+                    ifThenElseScope.ElseContext = scope.CreateConditionalContext(useParentTracker: false);
                 }
 
                 ifThenElseScope.InitializeScopes(token, context.Scopes.Count - 1);
@@ -426,7 +430,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
         {
             if (Context is ConditionalContext conditionalContext)
             {
-                return conditionalContext.Errors!.ToArray();
+                return conditionalContext.Errors?.ToArray();
             }
             else if (Context is CompositeContext compositeContext)
             {
@@ -451,6 +455,16 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Validation
             {
                 return null;
             }
+        }
+
+        internal bool HasEvaluatedSchema(JSchema validScopes)
+        {
+            if (Schema == validScopes)
+            {
+                return true;
+            }
+
+            return false;
         }
     }
 }

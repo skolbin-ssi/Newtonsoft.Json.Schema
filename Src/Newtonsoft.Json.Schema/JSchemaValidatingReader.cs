@@ -63,6 +63,32 @@ namespace Newtonsoft.Json.Schema
 #endif
 
         /// <summary>
+        /// Gets or sets a value indicating whether property names are compared case-insensitively during validation.
+        /// </summary>
+        public bool PropertyNameCaseInsensitive
+        {
+            get => _validator.PropertyNameCaseInsensitive;
+            set => _validator.PropertyNameCaseInsensitive = value;
+        }
+
+        /// <summary>
+        /// Gets or sets how <c>format</c> keywords are validated.
+        /// </summary>
+        public FormatHandling FormatHandling
+        {
+            get => _validator.FormatHandling;
+            set
+            {
+                if (value < FormatHandling.Default || value > FormatHandling.Assertion)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value));
+                }
+
+                _validator.FormatHandling = value;
+            }
+        }
+
+        /// <summary>
         /// Gets the text value of the current JSON token.
         /// </summary>
         /// <value></value>
@@ -294,7 +320,7 @@ namespace Newtonsoft.Json.Schema
         /// </returns>
         public override bool Read()
         {
-            // clear out exlicit value and token so inner reader values are used
+            // clear out explicit value and token so inner reader values are used
             _readAsValue = null;
             _readAsToken = null;
 

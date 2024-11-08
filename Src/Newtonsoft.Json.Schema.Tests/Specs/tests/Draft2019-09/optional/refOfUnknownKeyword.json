@@ -2,6 +2,7 @@
     {
         "description": "reference of a root arbitrary keyword ",
         "schema": {
+            "$schema": "https://json-schema.org/draft/2019-09/schema",
             "unknown-keyword": {"type": "integer"},
             "properties": {
                 "bar": {"$ref": "#/unknown-keyword"}
@@ -23,6 +24,7 @@
     {
         "description": "reference of an arbitrary keyword of a sub-schema",
         "schema": {
+            "$schema": "https://json-schema.org/draft/2019-09/schema",
             "properties": {
                 "foo": {"unknown-keyword": {"type": "integer"}},
                 "bar": {"$ref": "#/properties/foo/unknown-keyword"}
@@ -37,6 +39,29 @@
             {
                 "description": "mismatch",
                 "data": {"bar": true},
+                "valid": false
+            }
+        ]
+    },
+    {
+        "description": "reference internals of known non-applicator",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2019-09/schema",
+            "$id": "/base",
+            "examples": [
+              { "type": "string" }
+            ],
+            "$ref": "#/examples/0"
+        },
+        "tests": [
+            {
+                "description": "match",
+                "data": "a string",
+                "valid": true
+            },
+            {
+                "description": "mismatch",
+                "data": 42,
                 "valid": false
             }
         ]

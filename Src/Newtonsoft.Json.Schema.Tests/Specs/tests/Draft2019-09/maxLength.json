@@ -1,7 +1,10 @@
 [
     {
         "description": "maxLength validation",
-        "schema": {"maxLength": 2},
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2019-09/schema",
+            "maxLength": 2
+        },
         "tests": [
             {
                 "description": "shorter is valid",
@@ -24,9 +27,28 @@
                 "valid": true
             },
             {
-                "description": "two supplementary Unicode code points is long enough",
+                "description": "two graphemes is long enough",
                 "data": "\uD83D\uDCA9\uD83D\uDCA9",
                 "valid": true
+            }
+        ]
+    },
+    {
+        "description": "maxLength validation with a decimal",
+        "schema": {
+            "$schema": "https://json-schema.org/draft/2019-09/schema",
+            "maxLength": 2.0
+        },
+        "tests": [
+            {
+                "description": "shorter is valid",
+                "data": "f",
+                "valid": true
+            },
+            {
+                "description": "too long is invalid",
+                "data": "foo",
+                "valid": false
             }
         ]
     }

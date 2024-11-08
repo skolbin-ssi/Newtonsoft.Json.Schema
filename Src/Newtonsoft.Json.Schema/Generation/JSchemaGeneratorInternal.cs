@@ -85,17 +85,9 @@ namespace Newtonsoft.Json.Schema.Generation
 
         private string GetTypeName(Type type)
         {
-#if (PORTABLE || NETSTANDARD1_3 || NETSTANDARD2_0)
-            if (type.GetTypeInfo().IsGenericType)
-#else
             if (type.IsGenericType)
-#endif
             {
-#if (PORTABLE || NETSTANDARD1_3 || NETSTANDARD2_0)
-                Type[] genericTypeArguments = type.GetTypeInfo().GenericTypeArguments;
-#else
                 Type[] genericTypeArguments = type.GetGenericArguments();
-#endif
 
                 return type.Name.Split('`')[0] + "<" + string.Join(", ", genericTypeArguments.Select(GetTypeName)
 #if NET35
@@ -398,7 +390,7 @@ namespace Newtonsoft.Json.Schema.Generation
                     case JsonObjectContract objectContract:
                         if (nonNullableUnderlyingType == typeof(object))
                         {
-                            PopulatePrimativeSchema(schema, objectContract, memberProperty, valueRequired);
+                            PopulatePrimitiveSchema(schema, objectContract, memberProperty, valueRequired);
                         }
                         else
                         {
@@ -444,7 +436,7 @@ namespace Newtonsoft.Json.Schema.Generation
                         schema.MaximumLength = AttributeHelpers.GetMaxLength(memberProperty);
                         break;
                     case JsonPrimitiveContract primitiveContract:
-                        PopulatePrimativeSchema(schema, primitiveContract, memberProperty, valueRequired);
+                        PopulatePrimitiveSchema(schema, primitiveContract, memberProperty, valueRequired);
                         break;
                     case JsonDictionaryContract dictionaryContract:
                         schema.Type = AddNullType(JSchemaType.Object, valueRequired);
@@ -462,7 +454,7 @@ namespace Newtonsoft.Json.Schema.Generation
                             }
                         }
                         break;
-#if !PORTABLE || NETSTANDARD1_3 || NETSTANDARD2_0
+#if !PORTABLE || NETSTANDARD1_3 || NETSTANDARD2_0_OR_GREATER
                     case JsonISerializableContract serializableContract:
                         if (schema.Id == null)
                         {
@@ -485,7 +477,7 @@ namespace Newtonsoft.Json.Schema.Generation
             }
         }
 
-        private void PopulatePrimativeSchema(JSchema schema, JsonContract contract, JsonProperty? memberProperty, Required valueRequired)
+        private void PopulatePrimitiveSchema(JSchema schema, JsonContract contract, JsonProperty? memberProperty, Required valueRequired)
         {
             Type nonNullableUnderlyingType = GetNonNullableUnderlyingType(contract);
             JSchemaType type = GetJSchemaType(contract.UnderlyingType, valueRequired);
@@ -642,7 +634,7 @@ namespace Newtonsoft.Json.Schema.Generation
                 }
             }
 
-            if (type.IsSealed())
+            if (type.IsSealed() && contract.ExtensionDataGetter == null)
             {
                 schema.AllowAdditionalProperties = false;
             }

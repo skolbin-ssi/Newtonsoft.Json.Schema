@@ -1,7 +1,7 @@
 ﻿properties { 
-  $zipFileName = "JsonSchema30r15.zip"
-  $majorVersion = "3.0"
-  $majorWithReleaseVersion = "3.0.15"
+  $zipFileName = "JsonSchema40r2.zip"
+  $majorVersion = "4.0"
+  $majorWithReleaseVersion = "4.0.2"
   $nugetPrerelease = $null
   $version = GetVersion $majorWithReleaseVersion
   $packageId = "Newtonsoft.Json.Schema"
@@ -13,8 +13,8 @@
   $treatWarningsAsErrors = $false
   $workingName = if ($workingName) {$workingName} else {"Working"}
   $assemblyVersion = if ($assemblyVersion) {$assemblyVersion} else {$majorVersion + '.0.0'}
-  $netCliChannel = "Current"
-  $netCliVersion = "6.0.300"
+  $netCliChannel = "STS"
+  $netCliVersion = "8.0.300"
   $nugetUrl = "https://dist.nuget.org/win-x86-commandline/latest/nuget.exe"
   $ensureNetCliSdk = $true
   
@@ -27,14 +27,14 @@
   $workingDir = "$baseDir\$workingName"
 
   $nugetPath = "$buildDir\Temp\nuget.exe"
-  $vswhereVersion = "2.3.2"
+  $vswhereVersion = "3.1.7"
   $vswherePath = "$buildDir\Temp\vswhere.$vswhereVersion"
   $nunitConsoleVersion = "3.8.0"
   $nunitConsolePath = "$buildDir\Temp\NUnit.ConsoleRunner.$nunitConsoleVersion"
 
   $builds = @(
-    @{Framework = "netstandard1.3"; TestsFunction = "NetCliTests"; TestFramework = "netcoreapp2.1"; Enabled=$true}
-    @{Framework = "netstandard2.0"; TestsFunction = "NetCliTests"; TestFramework = "netcoreapp3.1"; Enabled=$true}
+    @{Framework = "netstandard2.0"; TestsFunction = "NetCliTests"; TestFramework = "net6.0"; Enabled=$true}
+    @{Framework = "netstandard2.1"; TestsFunction = "NetCliTests"; TestFramework = "net8.0"; Enabled=$true}
     @{Framework = "net45"; TestsFunction = "NUnitTests"; TestFramework = "net46"; NUnitFramework="net-4.0"; Enabled=$true},
     @{Framework = "net40"; TestsFunction = "NUnitTests"; NUnitFramework="net-4.0"; Enabled=$true},
     @{Framework = "net35"; TestsFunction = "NUnitTests"; NUnitFramework="net-2.0"; Enabled=$true}
@@ -173,8 +173,7 @@ function EnsureDotnetCli()
     -OutFile "$buildDir\Temp\dotnet-install.ps1"
 
   exec { & $buildDir\Temp\dotnet-install.ps1 -Channel $netCliChannel -Version $netCliVersion | Out-Default }
-  exec { & $buildDir\Temp\dotnet-install.ps1 -Channel $netCliChannel -Version '3.1.402' | Out-Default }
-  exec { & $buildDir\Temp\dotnet-install.ps1 -Channel $netCliChannel -Version '2.1.811' | Out-Default }
+  exec { & $buildDir\Temp\dotnet-install.ps1 -Channel $netCliChannel -Version '6.0.300' | Out-Default }
 }
 
 function EnsureNuGetExists()
@@ -196,7 +195,7 @@ function EnsureNuGetPackage($packageName, $packagePath, $packageVersion)
 
 function GetMsBuildPath()
 {
-  $path = & $vswherePath\tools\vswhere.exe -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+  $path = & $vswherePath\tools\vswhere.exe -latest -prerelease -products * -requires Microsoft.Component.MSBuild -property installationPath
   if (!($path))
   {
     throw "Could not find Visual Studio install path"
@@ -234,7 +233,7 @@ function NetCliTests($build)
     Write-Host "Project path: $projectPath"
     Write-Host
 
-    exec { dotnet test $projectPath -f $testDir -c Release -l trx -r $workingDir --no-restore --no-build | Out-Default }
+    exec { dotnet test $projectPath -f $testDir -c Release -l trx --results-directory $workingDir --no-restore --no-build | Out-Default }
   }
   finally
   {

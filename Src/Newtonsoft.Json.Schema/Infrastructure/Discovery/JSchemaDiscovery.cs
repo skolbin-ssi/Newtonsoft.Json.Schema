@@ -18,39 +18,40 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
         private readonly List<SchemaPath> _pathStack;
 
         public List<ValidationError>? ValidationErrors { get; set; }
+        public SchemaVersion SchemaVersion { get; set; }
 
         public KnownSchemaCollection KnownSchemas { get; }
 
         public JSchemaDiscovery(JSchema? rootSchema)
-            : this(rootSchema, new KnownSchemaCollection(), KnownSchemaState.External)
+            : this(rootSchema, SchemaVersion.Unset, new KnownSchemaCollection(), KnownSchemaState.External)
         {
         }
 
-        public JSchemaDiscovery(JSchema? rootSchema, KnownSchemaCollection knownSchemas, KnownSchemaState state)
+        public JSchemaDiscovery(JSchema? rootSchema, SchemaVersion schemaVersion, KnownSchemaCollection knownSchemas, KnownSchemaState state)
         {
             _rootSchema = rootSchema;
+            SchemaVersion = schemaVersion;
             _state = state;
             _pathStack = new List<SchemaPath>();
             KnownSchemas = knownSchemas ?? new KnownSchemaCollection();
         }
 
-        public void Discover(JSchema schema, Uri? scopedUri, string path = "#")
+        public void Discover(JSchema schema, Uri? scopedUri, string path = "#", Uri? dynamicScope = null)
         {
             Uri resolvedScopeUri = scopedUri ?? schema.ResolvedId ?? new Uri(string.Empty, UriKind.RelativeOrAbsolute);
 
-            _pathStack.Add(new SchemaPath(resolvedScopeUri, schema._referencedAs, string.Empty));
+            _pathStack.Add(new SchemaPath(resolvedScopeUri, schema._referencedAs, string.Empty, dynamicScope));
 
             DiscoverInternal(schema, path);
 
             _pathStack.RemoveAt(_pathStack.Count - 1);
         }
 
-        private void DiscoverInternal(JSchema schema, string latestPath, bool isDefinitionSchema = false)
+        private void DiscoverInternal(JSchema schema, string latestPath, bool isDefinitionSchema = false, Uri? dynamicScope = null)
         {
-            if (schema.HasReference)
-            {
-                return;
-            }
+            // Resolving the current scope from the path stack is a bit of a hack to avoid passing it to each method.
+            // Maybe there should be a discover context that gets passed around and dynamicScope is a value on it?
+            dynamicScope ??= schema.DynamicLoadScope ?? GetDynamicScope();
 
             // give schemas that are dependencies a special state so they are written as a dependency and not inline
             KnownSchemaState resolvedSchemaState = (_state == KnownSchemaState.InlinePending && isDefinitionSchema)
@@ -60,9 +61,10 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             string scopePath = latestPath;
             Uri schemaKnownId = GetSchemaIdAndNewScopeId(schema, ref scopePath, out Uri? newScopeId);
 
-            if (KnownSchemas.Contains(schema))
+            KnownSchemaKey knownSchemaKey = new KnownSchemaKey(schema, dynamicScope);
+            if (KnownSchemas.Contains(knownSchemaKey))
             {
-                KnownSchema alreadyDiscoveredSchema = KnownSchemas[schema];
+                KnownSchema alreadyDiscoveredSchema = KnownSchemas[knownSchemaKey];
 
                 // schema was previously discovered but exists in definitions
                 if (alreadyDiscoveredSchema.State == KnownSchemaState.InlinePending &&
@@ -71,31 +73,39 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
                 {
                     int existingKnownSchemaIndex = KnownSchemas.IndexOf(alreadyDiscoveredSchema);
 
-                    KnownSchemas[existingKnownSchemaIndex] = new KnownSchema(schemaKnownId, schema, resolvedSchemaState);
+                    KnownSchemas[existingKnownSchemaIndex] = new KnownSchema(schemaKnownId, dynamicScope, schema, schema.Root, resolvedSchemaState);
                 }
 
                 return;
             }
 
-            // check whether a schema with the resolved id is already known
-            // this will be hit when a schema contains duplicate ids or references a schema with a duplicate id
-            bool existingSchema = KnownSchemas.GetById(schemaKnownId) != null;
-
-            // add schema to known schemas whether duplicate or not to avoid multiple errors
-            // the first schema with a duplicate id will be used
-            KnownSchemas.Add(new KnownSchema(schemaKnownId, schema, resolvedSchemaState));
-
-            if (existingSchema)
+            if (ValidationErrors != null)
             {
-                if (ValidationErrors != null)
+                // check whether a schema with the resolved id is already known
+                // this will be hit when a schema contains duplicate ids or references a schema with a duplicate id
+                bool existingSchema = KnownSchemas.GetById(new KnownSchemaUriKey(schemaKnownId, dynamicScope, schema.Root)) != null;
+                if (existingSchema)
                 {
                     ValidationError error = ValidationError.CreateValidationError($"Duplicate schema id '{schemaKnownId.OriginalString}' encountered.", ErrorType.Id, schema, null, schemaKnownId, null, schema, schema.Path!);
                     ValidationErrors.Add(error);
                 }
             }
 
+            // If a schema was loaded with a dynamic scope, then don't attempt to registered it as a known schema with a different scope.
+            // The schema should be loaded again to handle dynamic changes.
+            if (schema.DynamicLoadScope != null &&
+                dynamicScope != null &&
+                !UriComparer.Instance.Equals(schema.DynamicLoadScope, dynamicScope))
+            {
+                return;
+            }
+
+            // add schema to known schemas whether duplicate or not to avoid multiple errors
+            // the first schema with a duplicate id will be used
+            KnownSchemas.Add(new KnownSchema(schemaKnownId, dynamicScope, schema, schema.Root, resolvedSchemaState));
+
             ValidationUtils.Assert(newScopeId != null);
-            _pathStack.Add(new SchemaPath(newScopeId, schema._referencedAs, scopePath));
+            _pathStack.Add(new SchemaPath(newScopeId, schema._referencedAs, scopePath, dynamicScope));
 
             // discover should happen in the same order as writer except extension data (e.g. definitions)
             if (schema._extensionData != null)
@@ -110,20 +120,34 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             }
 
             DiscoverSchema(Constants.PropertyNames.AdditionalProperties, schema.AdditionalProperties);
-            DiscoverSchema(Constants.PropertyNames.AdditionalItems, schema.AdditionalItems);
+            if (SchemaVersionHelpers.EnsureVersion(SchemaVersion, SchemaVersion.Draft3, SchemaVersion.Draft2019_09))
+            {
+                DiscoverSchema(Constants.PropertyNames.AdditionalItems, schema.AdditionalItems);
+            }
+            else
+            {
+                DiscoverSchema(Constants.PropertyNames.Items, schema.AdditionalItems);
+            }
             DiscoverSchema(Constants.PropertyNames.UnevaluatedProperties, schema.UnevaluatedProperties);
             DiscoverSchema(Constants.PropertyNames.UnevaluatedItems, schema.UnevaluatedItems);
             DiscoverDictionarySchemas(Constants.PropertyNames.Properties, schema._properties);
             DiscoverDictionarySchemas(Constants.PropertyNames.PatternProperties, schema._patternProperties);
             DiscoverDictionarySchemas(Constants.PropertyNames.Dependencies, schema._dependencies);
             DiscoverDictionarySchemas(Constants.PropertyNames.DependentSchemas, schema._dependentSchemas);
-            if (schema.ItemsPositionValidation)
+            if (SchemaVersionHelpers.EnsureVersion(SchemaVersion, SchemaVersion.Draft3, SchemaVersion.Draft2019_09))
             {
-                DiscoverArraySchemas(Constants.PropertyNames.Items, schema._items);
+                if (schema.ItemsPositionValidation)
+                {
+                    DiscoverArraySchemas(Constants.PropertyNames.Items, schema._items);
+                }
+                else if (schema._items != null && schema._items.Count > 0)
+                {
+                    DiscoverSchema(Constants.PropertyNames.Items, schema._items[0]);
+                }
             }
-            else if (schema._items != null && schema._items.Count > 0)
+            else
             {
-                DiscoverSchema(Constants.PropertyNames.Items, schema._items[0]);
+                DiscoverArraySchemas(Constants.PropertyNames.PrefixItems, schema._items);
             }
             DiscoverArraySchemas(Constants.PropertyNames.AllOf, schema._allOf);
             DiscoverArraySchemas(Constants.PropertyNames.AnyOf, schema._anyOf);
@@ -139,6 +163,19 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             _pathStack.RemoveAt(_pathStack.Count - 1);
         }
 
+        private Uri? GetDynamicScope()
+        {
+            for (int i = _pathStack.Count - 1; i >= 0; i--)
+            {
+                if (_pathStack[i].DynamicScope is { } stackScope)
+                {
+                    return stackScope;
+                }
+            }
+
+            return null;
+        }
+
         private Uri GetSchemaIdAndNewScopeId(JSchema schema, ref string latestPath, out Uri? newScopeId)
         {
             Uri currentScopeId = _pathStack[_pathStack.Count - 1].ScopeId;
@@ -150,7 +187,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
                 for (int i = 0; i < _pathStack.Count; i++)
                 {
                     SchemaPath p = _pathStack[i];
-                    if (p.ScopeId == currentScopeId && p.Path != null && p.Path.IndexOf('#') != -1)
+                    if (p.ScopeId == currentScopeId && p.Path != null && StringHelpers.IndexOf(p.Path, '#') != -1)
                     {
                         parentHash = true;
                         break;
@@ -214,16 +251,25 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             return schemaKnownId;
         }
 
-        private static string GetFragment(Uri referencedAs)
+        internal static string GetFragment(Uri uri)
         {
-            string reference = referencedAs.OriginalString;
-            int fragmentIndex = reference.IndexOf('#');
+            string reference = uri.OriginalString;
+            int fragmentIndex = StringHelpers.IndexOf(reference, '#');
             if (fragmentIndex > 0)
             {
                 reference = reference.Substring(fragmentIndex);
             }
 
             return reference;
+        }
+
+        internal static bool HasFragment(Uri uri)
+        {
+            string reference = uri.OriginalString;
+            int fragmentIndex = StringHelpers.IndexOf(reference, '#');
+
+            // Fragment is missing or empty.
+            return fragmentIndex != -1 && fragmentIndex != reference.Length - 1;
         }
 
         public static Uri ResolveSchemaIdAndScopeId(Uri? idScope, JSchema schema, string path, out Uri? newScope)
@@ -267,8 +313,10 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
             if (token is JObject o)
             {
                 JSchemaAnnotation? annotation = token.Annotation<JSchemaAnnotation>();
-                JSchema? tokenSchema = annotation?.GetSchema(null); // TODO
-                if (tokenSchema != null)
+                Uri? dynamicScope = GetDynamicScope();
+
+                JSchema? registeredSchema = annotation?.GetSchema(dynamicScope);
+                if (registeredSchema != null)
                 {
                     string name;
                     if (pathScopes.Count == 1)
@@ -279,7 +327,7 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
                     {
                         name = StringHelpers.Join("/", pathScopes);
                     }
-                    DiscoverInternal(tokenSchema, name, isDefinitionSchema);
+                    DiscoverInternal(registeredSchema, name, isDefinitionSchema, dynamicScope);
                 }
                 else
                 {
@@ -357,7 +405,9 @@ namespace Newtonsoft.Json.Schema.Infrastructure.Discovery
                 if (path[i] == '~' || path[i] == '/')
                 {
                     // Could be faster but most paths don't need to be escaped.
-                    return path.Replace("~", "~0").Replace("/", "~1");
+                    string escapedPath = StringHelpers.Replace(path, "~", "~0");
+                    escapedPath = StringHelpers.Replace(escapedPath, "/", "~1");
+                    return escapedPath;
                 }
             }
 

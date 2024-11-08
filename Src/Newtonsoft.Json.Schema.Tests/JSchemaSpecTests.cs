@@ -34,6 +34,7 @@ namespace Newtonsoft.Json.Schema.Tests
         public JToken Data { get; set; }
         public bool IsValid { get; set; }
         public int TestNumber { get; set; }
+        public bool IsFormatTest { get; set; }
 
         public override string ToString()
         {
@@ -51,26 +52,32 @@ namespace Newtonsoft.Json.Schema.Tests
             if (_resolver == null)
             {
                 var resolver = new JSchemaPreloadedResolver();
-                AddSchema(resolver, "draft3.json", "http://json-schema.org/draft-03/schema");
-                AddSchema(resolver, "draft4.json", "http://json-schema.org/draft-04/schema");
-                AddSchema(resolver, "draft6.json", "http://json-schema.org/draft-06/schema");
-                AddSchema(resolver, "draft7.json", "http://json-schema.org/draft-07/schema");
-                AddSchema(resolver, "draft2019-09/draft2019-09.json", "https://json-schema.org/draft/2019-09/schema");
-                AddSchema(resolver, "draft2019-09/meta/applicator.json", "https://json-schema.org/draft/2019-09/meta/applicator");
-                AddSchema(resolver, "draft2019-09/meta/content.json", "https://json-schema.org/draft/2019-09/meta/content");
-                AddSchema(resolver, "draft2019-09/meta/core.json", "https://json-schema.org/draft/2019-09/meta/core");
-                AddSchema(resolver, "draft2019-09/meta/format.json", "https://json-schema.org/draft/2019-09/meta/format");
-                AddSchema(resolver, "draft2019-09/meta/hyper-schema.json", "https://json-schema.org/draft/2019-09/meta/hyper-schema");
-                AddSchema(resolver, "draft2019-09/meta/meta-data.json", "https://json-schema.org/draft/2019-09/meta/meta-data");
-                AddSchema(resolver, "draft2019-09/meta/validation.json", "https://json-schema.org/draft/2019-09/meta/validation");
-                AddSchema(resolver, "integer.json", "http://localhost:1234/integer.json");
-                AddSchema(resolver, "baseUriChange/folderInteger.json", "http://localhost:1234/baseUriChange/folderInteger.json");
-                AddSchema(resolver, "baseUriChangeFolder/folderInteger.json", "http://localhost:1234/baseUriChangeFolder/folderInteger.json");
-                AddSchema(resolver, "baseUriChangeFolderInSubschema/folderInteger.json", "http://localhost:1234/baseUriChangeFolderInSubschema/folderInteger.json");
-                AddSchema(resolver, "subSchemas.json", "http://localhost:1234/subSchemas.json");
-                AddSchema(resolver, "subSchemas-defs.json", "http://localhost:1234/subSchemas-defs.json");
-                AddSchema(resolver, "name.json", "http://localhost:1234/name.json");
-                AddSchema(resolver, "name-defs.json", "http://localhost:1234/name-defs.json");
+                // Spec schemas
+                AddSchema(resolver, "draft3.json", "http://json-schema.org/draft-03/schema", "drafts");
+                AddSchema(resolver, "draft4.json", "http://json-schema.org/draft-04/schema", "drafts");
+                AddSchema(resolver, "draft6.json", "http://json-schema.org/draft-06/schema", "drafts");
+                AddSchema(resolver, "draft7.json", "http://json-schema.org/draft-07/schema", "drafts");
+                AddSchema(resolver, "draft2019-09/schema.json", "https://json-schema.org/draft/2019-09/schema", "drafts");
+                AddSchema(resolver, "draft2019-09/meta/applicator.json", "https://json-schema.org/draft/2019-09/meta/applicator", "drafts");
+                AddSchema(resolver, "draft2019-09/meta/content.json", "https://json-schema.org/draft/2019-09/meta/content", "drafts");
+                AddSchema(resolver, "draft2019-09/meta/core.json", "https://json-schema.org/draft/2019-09/meta/core", "drafts");
+                AddSchema(resolver, "draft2019-09/meta/format.json", "https://json-schema.org/draft/2019-09/meta/format", "drafts");
+                AddSchema(resolver, "draft2019-09/meta/hyper-schema.json", "https://json-schema.org/draft/2019-09/meta/hyper-schema", "drafts");
+                AddSchema(resolver, "draft2019-09/meta/meta-data.json", "https://json-schema.org/draft/2019-09/meta/meta-data", "drafts");
+                AddSchema(resolver, "draft2019-09/meta/validation.json", "https://json-schema.org/draft/2019-09/meta/validation", "drafts");
+                AddSchema(resolver, "draft2020-12/schema.json", "https://json-schema.org/draft/2020-12/schema", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/applicator.json", "https://json-schema.org/draft/2020-12/meta/applicator", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/content.json", "https://json-schema.org/draft/2020-12/meta/content", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/core.json", "https://json-schema.org/draft/2020-12/meta/core", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/format-annotation.json", "https://json-schema.org/draft/2020-12/meta/format-annotation", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/format-assertion.json", "https://json-schema.org/draft/2020-12/meta/format-assertion", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/hyper-schema.json", "https://json-schema.org/draft/2020-12/meta/hyper-schema", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/meta-data.json", "https://json-schema.org/draft/2020-12/meta/meta-data", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/unevaluated.json", "https://json-schema.org/draft/2020-12/meta/unevaluated", "drafts");
+                AddSchema(resolver, "draft2020-12/meta/validation.json", "https://json-schema.org/draft/2020-12/meta/validation", "drafts");
+
+                // Test resource schemas
+                AddRemotes(resolver);
 
                 _resolver = resolver;
             }
@@ -78,20 +85,27 @@ namespace Newtonsoft.Json.Schema.Tests
             return _resolver;
         }
 
-        private static void AddSchema(JSchemaPreloadedResolver resolver, string schemaFileName, string id)
+        private static void AddRemotes(JSchemaPreloadedResolver resolver)
         {
             string baseRemotePath = ResolvePath(Path.Combine("Specs", "remotes"));
+
+            string[] remoteFiles = Directory.GetFiles(baseRemotePath, "*.*", SearchOption.AllDirectories);
+
+            foreach (string remoteFile in remoteFiles)
+            {
+                string json = File.ReadAllText(remoteFile);
+                string id = "http://localhost:1234/" + remoteFile.Substring(baseRemotePath.Length + 1);
+                resolver.Add(new Uri(id), json);
+            }
+        }
+
+        private static void AddSchema(JSchemaPreloadedResolver resolver, string schemaFileName, string id, string subDirectory = null)
+        {
+            string baseRemotePath = ResolvePath(Path.Combine("Specs", subDirectory ?? "remotes"));
 
             string json = File.ReadAllText(Path.Combine(baseRemotePath, schemaFileName));
 
             resolver.Add(new Uri(id), json);
-        }
-
-        private Uri GetSchemaUri(string version)
-        {
-            SchemaVersion schemaVersion = (SchemaVersion)Enum.Parse(typeof(SchemaVersion), version.Replace('-', '_'));
-
-            return SchemaVersionHelpers.MapSchemaVersion(schemaVersion);
         }
 
 #if DNXCORE50
@@ -107,10 +121,7 @@ namespace Newtonsoft.Json.Schema.Tests
             JSchemaPreloadedResolver resolver = GetResolver();
 
             var schemaToken = schemaSpecTest.Schema.DeepClone();
-            if (schemaToken.Type == JTokenType.Object)
-            {
-                schemaToken["$schema"] = GetSchemaUri(schemaSpecTest.Version);
-            }
+            SetSchemaVersion(schemaSpecTest, schemaToken);
 
             JSchema s = JSchema.Load(schemaToken.CreateReader(), new JSchemaReaderSettings
             {
@@ -123,6 +134,10 @@ namespace Newtonsoft.Json.Schema.Tests
             {
                 reader.Schema = s;
                 reader.ValidationEventHandler += (sender, args) => errorMessages.Add(args.Message);
+                if (schemaSpecTest.IsFormatTest)
+                {
+                    reader.FormatHandling = FormatHandling.Assertion;
+                }
 
                 while (reader.Read())
                 {
@@ -147,10 +162,7 @@ namespace Newtonsoft.Json.Schema.Tests
             JSchemaPreloadedResolver resolver = GetResolver();
 
             var schemaToken = schemaSpecTest.Schema.DeepClone();
-            if (schemaToken.Type == JTokenType.Object)
-            {
-                schemaToken["$schema"] = GetSchemaUri(schemaSpecTest.Version);
-            }
+            SetSchemaVersion(schemaSpecTest, schemaToken);
 
             JSchema s = JSchema.Load(schemaToken.CreateReader(), resolver);
             s.SchemaVersion = GetSchemaUri(schemaSpecTest.Version);
@@ -163,6 +175,10 @@ namespace Newtonsoft.Json.Schema.Tests
             {
                 validatingWriter.Schema = s;
                 validatingWriter.ValidationEventHandler += (sender, args) => errorMessages.Add(args.Message);
+                if (schemaSpecTest.IsFormatTest)
+                {
+                    validatingWriter.FormatHandling = FormatHandling.Assertion;
+                }
 
                 while (jsonReader.Read())
                 {
@@ -195,6 +211,8 @@ namespace Newtonsoft.Json.Schema.Tests
                 testFiles = testFiles.Where(f => !f.EndsWith("non-bmp-regex.json")).ToArray();
                 testFiles = testFiles.Where(f => !f.EndsWith("ecmascript-regex.json")).ToArray();
                 testFiles = testFiles.Where(f => !f.EndsWith("float-overflow.json")).ToArray();
+                testFiles = testFiles.Where(f => !f.EndsWith("vocabulary.json")).ToArray();
+                testFiles = testFiles.Where(f => !f.EndsWith("format-assertion.json")).ToArray();                
 
                 // todo - add support for all formats
                 testFiles = testFiles.Where(f => !f.EndsWith("content.json")
@@ -212,6 +230,7 @@ namespace Newtonsoft.Json.Schema.Tests
                     string testJson = System.IO.File.ReadAllText(testFile);
 
                     JsonTextReader testJsonReader = new JsonTextReader(new StringReader(testJson));
+                    testJsonReader.DateParseHandling = DateParseHandling.None;
                     testJsonReader.FloatParseHandling = testFile.EndsWith("const.json")
                         ? FloatParseHandling.Decimal
                         : FloatParseHandling.Double;
@@ -228,6 +247,7 @@ namespace Newtonsoft.Json.Schema.Tests
                             schemaSpecTest.Version = version;
                             schemaSpecTest.TestCaseDescription = (string)testCase["description"];
                             schemaSpecTest.Schema = testCase["schema"];
+                            schemaSpecTest.IsFormatTest = Path.GetDirectoryName(testFile).EndsWith(Path.Combine("optional", "format"), StringComparison.OrdinalIgnoreCase);
 
                             schemaSpecTest.TestDescription = (string)test["description"];
                             schemaSpecTest.Data = test["data"];
@@ -242,6 +262,19 @@ namespace Newtonsoft.Json.Schema.Tests
                                 continue;
                             }
 #endif
+                            // Allow time without offset for backwards compatibility.
+                            if (schemaSpecTest.FileName == "time.json" &&
+                                (schemaSpecTest.TestDescription == "no time offset with second fraction" || schemaSpecTest.TestDescription == "no time offset"))
+                            {
+                                continue;
+                            }
+                            // Can't test support the future because the future isn't supported yet.
+                            if (string.Equals(schemaSpecTest.Version, "Draft2019-09", StringComparison.OrdinalIgnoreCase) &&
+                                schemaSpecTest.FileName == "cross-draft.json" &&
+                                schemaSpecTest.TestCaseDescription == "refs to future drafts are processed as future drafts")
+                            {
+                                continue;
+                            }
 
                             _specTests.Add(schemaSpecTest);
                         }
@@ -271,6 +304,23 @@ namespace Newtonsoft.Json.Schema.Tests
             }
 
             return relativePath;
+        }
+
+        private static Uri GetSchemaUri(string version)
+        {
+            SchemaVersion schemaVersion = (SchemaVersion)Enum.Parse(typeof(SchemaVersion), version.Replace('-', '_'), ignoreCase: true);
+
+            return SchemaVersionHelpers.MapSchemaVersion(schemaVersion);
+        }
+
+        private static void SetSchemaVersion(SchemaSpecTest schemaSpecTest, JToken schemaToken)
+        {
+            if (schemaToken.Type == JTokenType.Object)
+            {
+                var o = (JObject)schemaToken;
+                o.Remove("$schema");
+                o.AddFirst(new JProperty("$schema", GetSchemaUri(schemaSpecTest.Version)));
+            }
         }
     }
 }
